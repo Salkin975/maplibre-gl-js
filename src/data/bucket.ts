@@ -6,12 +6,12 @@ import type {Context} from '../gl/context';
 import type {FeatureStates} from '../source/source_state';
 import type {ImagePosition} from '../render/image_atlas';
 import type {CanonicalTileID} from '../tile/tile_id';
-import type {VectorTileFeature, VectorTileLayer} from '@mapbox/vector-tile';
 import type Point from '@mapbox/point-geometry';
 import type {SubdivisionGranularitySetting} from '../render/subdivision_granularity_settings';
 import type {DashEntry} from '../render/line_atlas';
 import type {Feature as StyleFeature} from '@maplibre/maplibre-gl-style-spec';
 import {type FeatureTable} from '@maplibre/mlt';
+import type {VectorTileFeatureLike, VectorTileLayerLike} from '@maplibre/vt-pbf';
 
 export type BucketParameters<Layer extends TypedStyleLayer> = {
     index: number;
@@ -36,7 +36,7 @@ export type PopulateParameters = {
 };
 
 export type IndexedFeature = {
-    feature: VectorTileFeature;
+    feature: VectorTileFeatureLike;
     id: number | string;
     index: number;
     sourceLayerIndex: number;
