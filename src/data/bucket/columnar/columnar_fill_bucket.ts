@@ -506,7 +506,6 @@ export class ColumnarFillBucket implements Bucket {
         return vertexBufferOffset;
     }
 
-
     addPolygonsWithoutSelectionVector(gpuVector: IGpuVector, extent: number, index: number, canonical: CanonicalTileID, imagePositions: {
         [_: string]: ImagePosition;
     }) {
@@ -792,29 +791,42 @@ export class ColumnarFillBucket implements Bucket {
         }
     }
 
-    addMultiPolygonOutlinesWithoutSelectionVector(featureTable: FeatureTable, numGeometries,
+    addMultiPolygonOutlinesWithoutSelectionVector(featureTable: FeatureTable, numGeometries: number,
         canonical: CanonicalTileID) {
         const geometryVector = featureTable.geometryVector as IGeometryVector;
         const topologyVector = geometryVector.topologyVector;
         const geometryOffsets = topologyVector.geometryOffsets;
         const ringOffsets = topologyVector.ringOffsets;
         const partOffsets = topologyVector.partOffsets;
+        const scaleFactor = EXTENT / featureTable.extent;
+
         for (let featureOffset = 0; featureOffset < numGeometries; featureOffset++) {
             let partOffset = geometryOffsets[featureOffset];
-            const numGeometries = geometryOffsets[featureOffset + 1] - partOffset;
-            for (let l = 0; l < numGeometries; l++) {
+            const numPolygons = geometryOffsets[featureOffset + 1] - partOffset;
+
+            for (let l = 0; l < numPolygons; l++) {
                 let ringOffset = partOffsets[partOffset++];
                 const numRings = partOffsets[partOffset] - ringOffset;
+
                 for (let j = 0; j < numRings; j++) {
                     const ringOffsetStart = ringOffsets[ringOffset++];
                     const ringOffsetEnd = ringOffsets[ringOffset];
                     const numVertices = ringOffsetEnd - ringOffsetStart;
 
-                    //TODO: fix
-                    const arr = new FillLayoutArray();
-                    const lineSegment = this.segments2.prepareSegment(numVertices, arr, this.indexArray2);
+                    // FIXED: Use shared layoutVertexArray instead of creating new array
+                    const lineSegment = this.segments2.prepareSegment(numVertices, this.layoutVertexArray, this.indexArray2);
                     const lineIndex = lineSegment.vertexLength;
 
+                    // ADD THE ACTUAL VERTICES
+                    for (let k = ringOffsetStart; k < ringOffsetEnd; k++) {
+                        const vertex = geometryVector.getVertex(k);
+                        this.layoutVertexArray.emplaceBack(
+                            vertex[0] * scaleFactor,
+                            vertex[1] * scaleFactor
+                        );
+                    }
+
+                    // Add line indices
                     this.indexArray2.emplaceBack(lineIndex + numVertices - 1, lineIndex);
                     for (let k = 1; k < numVertices; k++) {
                         this.indexArray2.emplaceBack(lineIndex + k - 1, lineIndex + k);
@@ -895,27 +907,38 @@ export class ColumnarFillBucket implements Bucket {
     }
 
     addPolygonOutlinesWithSelectionVector(featureTable: FeatureTable, selectionVector: SelectionVector,
-        canonical: CanonicalTileID){
+        canonical: CanonicalTileID) {
         const geometryVector = featureTable.geometryVector as IGeometryVector;
         const topologyVector = geometryVector.topologyVector;
         const ringOffsets = topologyVector.ringOffsets;
         const partOffsets = topologyVector.partOffsets;
-        for(let i = 0; i < selectionVector.limit; i++){
+        const scaleFactor = EXTENT / featureTable.extent;
+
+        for (let i = 0; i < selectionVector.limit; i++) {
             const index = selectionVector.getIndex(i);
             let ringOffset = partOffsets[index];
-            const numRings = partOffsets[index+1] - ringOffset;
-            for(let j = 0; j < numRings; j++){
+            const numRings = partOffsets[index + 1] - ringOffset;
+
+            for (let j = 0; j < numRings; j++) {
                 const ringOffsetStart = ringOffsets[ringOffset++];
                 const ringOffsetEnd = ringOffsets[ringOffset];
                 const numVertices = ringOffsetEnd - ringOffsetStart;
 
-                //TODO: fix
-                const arr = new FillLayoutArray();
-                const lineSegment = this.segments2.prepareSegment(numVertices, arr, this.indexArray2);
+                // FIXED: Use shared layoutVertexArray
+                const lineSegment = this.segments2.prepareSegment(numVertices, this.layoutVertexArray, this.indexArray2);
                 const lineIndex = lineSegment.vertexLength;
 
-                this.indexArray2.emplaceBack(lineIndex + numVertices-1, lineIndex);
-                for(let k = 1; k < numVertices; k++){
+                // ADD THE ACTUAL VERTICES
+                for (let k = ringOffsetStart; k < ringOffsetEnd; k++) {
+                    const vertex = geometryVector.getVertex(k);
+                    this.layoutVertexArray.emplaceBack(
+                        vertex[0] * scaleFactor,
+                        vertex[1] * scaleFactor
+                    );
+                }
+
+                this.indexArray2.emplaceBack(lineIndex + numVertices - 1, lineIndex);
+                for (let k = 1; k < numVertices; k++) {
                     this.indexArray2.emplaceBack(lineIndex + k - 1, lineIndex + k);
                 }
 
@@ -935,31 +958,43 @@ export class ColumnarFillBucket implements Bucket {
     }
 
     addMultiPolygonOutlinesWithSelectionVector(featureTable: FeatureTable, selectionVector: SelectionVector,
-        canonical: CanonicalTileID){
+        canonical: CanonicalTileID) {
         const geometryVector = featureTable.geometryVector as IGeometryVector;
         const topologyVector = geometryVector.topologyVector;
         const geometryOffsets = topologyVector.geometryOffsets;
         const ringOffsets = topologyVector.ringOffsets;
         const partOffsets = topologyVector.partOffsets;
-        for(let i = 0; i < selectionVector.limit; i++){
+        const scaleFactor = EXTENT / featureTable.extent;
+
+        for (let i = 0; i < selectionVector.limit; i++) {
             const index = selectionVector.getIndex(i);
             let partOffset = geometryOffsets[index];
-            const numGeometries = geometryOffsets[index+1] - partOffset;
-            for(let l = 0; l < numGeometries; l++){
+            const numPolygons = geometryOffsets[index + 1] - partOffset;
+
+            for (let l = 0; l < numPolygons; l++) {
                 let ringOffset = partOffsets[partOffset++];
                 const numRings = partOffsets[partOffset] - ringOffset;
-                for(let j = 0; j < numRings; j++){
+
+                for (let j = 0; j < numRings; j++) {
                     const ringOffsetStart = ringOffsets[ringOffset++];
                     const ringOffsetEnd = ringOffsets[ringOffset];
                     const numVertices = ringOffsetEnd - ringOffsetStart;
 
-                    //TODO: fix
-                    const arr = new FillLayoutArray();
-                    const lineSegment = this.segments2.prepareSegment(numVertices, arr, this.indexArray2);
+                    // FIXED: Use shared layoutVertexArray
+                    const lineSegment = this.segments2.prepareSegment(numVertices, this.layoutVertexArray, this.indexArray2);
                     const lineIndex = lineSegment.vertexLength;
 
-                    this.indexArray2.emplaceBack(lineIndex + numVertices-1, lineIndex);
-                    for(let k = 1; k < numVertices; k++){
+                    // ADD THE ACTUAL VERTICES
+                    for (let k = ringOffsetStart; k < ringOffsetEnd; k++) {
+                        const vertex = geometryVector.getVertex(k);
+                        this.layoutVertexArray.emplaceBack(
+                            vertex[0] * scaleFactor,
+                            vertex[1] * scaleFactor
+                        );
+                    }
+
+                    this.indexArray2.emplaceBack(lineIndex + numVertices - 1, lineIndex);
+                    for (let k = 1; k < numVertices; k++) {
                         this.indexArray2.emplaceBack(lineIndex + k - 1, lineIndex + k);
                     }
 

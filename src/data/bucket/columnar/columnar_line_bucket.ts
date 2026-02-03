@@ -157,9 +157,11 @@ export class ColumnarLineBucket implements Bucket {
 
         const filterSpecification = this.layers[0].filter as any;
         const selectionVector = filter(featureTable, filterSpecification);
+
         if(selectionVector.limit === 0){
             return;
         }
+
         const lineSortKey = this.layers[0].layout.get('line-sort-key');
         const shouldSort = !lineSortKey.isConstant() || lineSortKey.constantOr(null) !== null;
 
@@ -168,6 +170,8 @@ export class ColumnarLineBucket implements Bucket {
         }
 
         const geometryVector = featureTable.geometryVector as IGeometryVector;
+        const topologyVector = geometryVector.topologyVector;
+
         const layout = this.layers[0].layout;
         //TODO: fix -> add support for data driven styling based on feature
         if(!layout.get('line-join').isConstant()){
@@ -178,18 +182,6 @@ export class ColumnarLineBucket implements Bucket {
         const cap = layout.get('line-cap');
         const miterLimit = layout.get('line-miter-limit');
         const roundLimit = layout.get('line-round-limit');
-        //this.lineClips = this.lineFeatureClips(feature);
-
-        /*
-        * TODOs
-        * - add features to FeatureIndex
-        * - add pattern features
-        * - add lineClips
-        * - evaluate line-joins per feature
-        * - add support for data driven styling
-        * */
-
-        const topologyVector = geometryVector.topologyVector;
 
         if(geometryVector.containsSingleGeometryType() && topologyVector.partOffsets && !topologyVector.geometryOffsets){
             this.addLineStrings(featureTable, selectionVector, join, cap, miterLimit, roundLimit, canonical);
@@ -204,7 +196,7 @@ export class ColumnarLineBucket implements Bucket {
             this.addMultiPolygon(featureTable, selectionVector, join, cap, miterLimit, roundLimit, canonical);
         }
         else{
-            throw new Error('Point, MultiPoint or MultiPolygon geometries are not supported for a LineLayer.');
+            throw new Error('Point, MultiPoint or geometry type not supported for a LineLayer.');
         }
     }
 
@@ -327,8 +319,8 @@ export class ColumnarLineBucket implements Bucket {
         this.segments.destroy();
     }
 
-    addLineStrings(featureTable: FeatureTable, selectionVector: SelectionVector, join: string, cap: string,
-        miterLimit: number, roundLimit: number, canonical: CanonicalTileID){
+    addLineStrings(featureTable: FeatureTable, selectionVector: SelectionVector, join: string, cap: any,
+        miterLimit: any, roundLimit: any, canonical: CanonicalTileID){
         const geometryVector = featureTable.geometryVector as IGeometryVector;
         const partOffsets = geometryVector.topologyVector.partOffsets;
         const tileExtent = featureTable.extent;
@@ -342,9 +334,7 @@ export class ColumnarLineBucket implements Bucket {
                 endOffset, false, join, cap, miterLimit, roundLimit, tileExtent);
 
             const id = featureTable.idVector ? Number(featureTable.idVector.getValue(i)) : i;
-            //Test style only has constant paint properties -> no feature needed for evaluation
             const feature = {id} as any;
-            // Convert imagePositions to PaintOptions format
             const paintOptions = {
                 imagePositions: null,
                 canonical
@@ -354,8 +344,8 @@ export class ColumnarLineBucket implements Bucket {
         }
     }
 
-    addMultiLineStrings(featureTable: FeatureTable, selectionVector: SelectionVector, join: string, cap: string,
-        miterLimit: number, roundLimit: number, canonical: CanonicalTileID){
+    addMultiLineStrings(featureTable: FeatureTable, selectionVector: SelectionVector, join: string, cap: any,
+        miterLimit: any, roundLimit: any, canonical: CanonicalTileID){
         const geometryVector = featureTable.geometryVector as IGeometryVector;
         const geometryOffsets = geometryVector.topologyVector.geometryOffsets;
         const partOffsets = geometryVector.topologyVector.partOffsets;
@@ -372,107 +362,97 @@ export class ColumnarLineBucket implements Bucket {
 
                 this.addLine(geometryVector, startOffset, endOffset, false, join, cap, miterLimit, roundLimit, tileExtent);
                 partOffset++;
-
-                const id = featureTable.idVector ? Number(featureTable.idVector.getValue(i)) : i;
-                //Test style only has constant paint properties -> no feature needed for evaluation
-                const feature = {id} as any;
-                // Convert imagePositions to PaintOptions format
-                const paintOptions = {
-                    imagePositions: null,
-                    canonical
-                };
-
-                this.programConfigurations.populatePaintArrays(this.layoutVertexArray.length, feature, index, paintOptions);
             }
+
+            const id = featureTable.idVector ? Number(featureTable.idVector.getValue(i)) : i;
+            const feature = {id} as any;
+            const paintOptions = {
+                imagePositions: null,
+                canonical
+            };
+
+            this.programConfigurations.populatePaintArrays(this.layoutVertexArray.length, feature, index, paintOptions);
         }
     }
 
-    //TODO: implement generic solution and merge with addMultiLineString method -
-    addPolygon(featureTable: FeatureTable, selectionVector: SelectionVector, join: string, cap: string,
-        miterLimit: number, roundLimit: number, canonical: CanonicalTileID){
+    addPolygon(featureTable: FeatureTable, selectionVector: SelectionVector, join: string, cap: any,
+        miterLimit: any, roundLimit: any, canonical: CanonicalTileID){
         const geometryVector = featureTable.geometryVector as IGeometryVector;
         const ringOffsets = geometryVector.topologyVector.ringOffsets;
         const partOffsets = geometryVector.topologyVector.partOffsets;
         const tileExtent = featureTable.extent;
+
         for(let i = 0; i < selectionVector.limit; i++){
             const index = selectionVector.getIndex(i);
             const geometryType = geometryVector.geometryType(index);
-            let ringOffset = partOffsets[index];
-            const numRings = partOffsets[index+1] - ringOffset;
+
+            const ringOffsetStart = partOffsets[index];
+            const numRings = partOffsets[index+1] - ringOffsetStart;
+
             for(let j = 0; j < numRings; j++){
-                const ringOffsetStart = ringOffsets[ringOffset++];
-                const ringOffsetEnd = ringOffsets[ringOffset];
-                this.addLine(geometryVector, ringOffsetStart, ringOffsetEnd, geometryType === 2, join, cap, miterLimit,
-                    roundLimit, tileExtent);
+                const ringStart = ringOffsets[ringOffsetStart + j];
+                const ringEnd = ringOffsets[ringOffsetStart + j + 1];
 
-                const id = featureTable.idVector ? Number(featureTable.idVector.getValue(i)) : i;
-                //Test style only has constant paint properties -> no feature needed for evaluation
-                const feature = {id} as any;
-                // Convert imagePositions to PaintOptions format
-                const paintOptions = {
-                    imagePositions: null,
-                    canonical
-                };
-
-                this.programConfigurations.populatePaintArrays(this.layoutVertexArray.length, feature, index, paintOptions);
+                this.addLine(geometryVector, ringStart, ringEnd, geometryType === 2 || geometryType === 3,
+                    join, cap, miterLimit, roundLimit, tileExtent);
             }
+
+            const id = featureTable.idVector ? Number(featureTable.idVector.getValue(i)) : i;
+            const feature = {id} as any;
+            const paintOptions = {
+                imagePositions: null,
+                canonical
+            };
+
+            this.programConfigurations.populatePaintArrays(this.layoutVertexArray.length, feature, index, paintOptions);
         }
     }
 
-    addMultiPolygon(featureTable: FeatureTable, selectionVector: SelectionVector, join: string, cap: string,
-        miterLimit: number, roundLimit: number, canonical: CanonicalTileID){
+    addMultiPolygon(featureTable: FeatureTable, selectionVector: SelectionVector, join: string, cap: any,
+        miterLimit: any, roundLimit: any, canonical: CanonicalTileID){
         const geometryVector = featureTable.geometryVector as IGeometryVector;
         const geometryOffsets = geometryVector.topologyVector.geometryOffsets;
         const ringOffsets = geometryVector.topologyVector.ringOffsets;
         const partOffsets = geometryVector.topologyVector.partOffsets;
         const tileExtent = featureTable.extent;
+
         for(let i = 0; i < selectionVector.limit; i++){
             const index = selectionVector.getIndex(i);
             const geometryType = geometryVector.geometryType(index);
-            const partOffset = geometryOffsets[index];
-            const numPolygons = geometryOffsets[index+1] - partOffset;
+            const partOffsetStart = geometryOffsets[index];
+            const numPolygons = geometryOffsets[index+1] - partOffsetStart;
+
             for(let j = 0; j < numPolygons; j++){
-                let ringOffset = partOffsets[partOffset];
-                const numRings = partOffsets[partOffset+1] - ringOffset;
+                const ringOffsetStart = partOffsets[partOffsetStart + j];
+                const numRings = partOffsets[partOffsetStart + j + 1] - ringOffsetStart;
+
                 for(let k = 0; k < numRings; k++){
-                    const ringOffsetStart = ringOffsets[ringOffset++];
-                    const ringOffsetEnd = ringOffsets[ringOffset];
-                    this.addLine(geometryVector, ringOffsetStart, ringOffsetEnd,
-                        geometryType === 2 || geometryType === 5, join, cap, miterLimit,
-                        roundLimit, tileExtent);
+                    const ringStart = ringOffsets[ringOffsetStart + k];
+                    const ringEnd = ringOffsets[ringOffsetStart + k + 1];
 
-                    const id = featureTable.idVector ? Number(featureTable.idVector.getValue(i)) : i;
-                    //Test style only has constant paint properties -> no feature needed for evaluation
-                    const feature = {id} as any;
-                    // Convert imagePositions to PaintOptions format
-                    const paintOptions = {
-                        imagePositions: null,
-                        canonical
-                    };
-
-                    this.programConfigurations.populatePaintArrays(this.layoutVertexArray.length, feature, index, paintOptions);
+                    this.addLine(geometryVector, ringStart, ringEnd,
+                        geometryType === 2 || geometryType === 3 || geometryType === 5 || geometryType === 6,
+                        join, cap, miterLimit, roundLimit, tileExtent);
                 }
             }
+
+            const id = featureTable.idVector ? Number(featureTable.idVector.getValue(i)) : i;
+            const feature = {id} as any;
+            const paintOptions = {
+                imagePositions: null,
+                canonical
+            };
+
+            this.programConfigurations.populatePaintArrays(this.layoutVertexArray.length, feature, index, paintOptions);
         }
     }
 
-    private ensureSegmentCapacity(segment: Segment, verticesNeeded: number = 10): Segment {
-        const MAX_VERTEX = SegmentVector.MAX_VERTEX_ARRAY_LENGTH;
+    addLine(geometryVector: IGeometryVector, startOffset: number, endOffset: number, isPolygon: boolean,
+        join: string, cap: any, miterLimit: any, roundLimit: any, tileExtent: number) {
 
-        // Check if adding vertices would exceed WebGL's 16-bit addressing limit
-        if (segment.vertexLength + verticesNeeded > MAX_VERTEX) {
-            // Force new segment creation
-            this.segments.forceNewSegmentOnNextPrepare();
-            const newSegment = this.segments.prepareSegment(verticesNeeded, this.layoutVertexArray, this.indexArray);
-            // Reset triangle indices for new segment
-            this.e1 = this.e2 = -1;
-            return newSegment;
-        }
-        return segment;
-    }
+        const vertexCountBefore = this.layoutVertexArray.length;
+        const indexCountBefore = this.indexArray.length;
 
-    addLine(geometryVector: IGeometryVector, startOffset: number, endOffset: number,  isPolygon: boolean,
-        join: string, cap: string, miterLimit: number, roundLimit: number, tileExtent: number) {
         this.distance = 0;
         this.scaledDistance = 0;
         this.totalDistance = 0;
@@ -505,7 +485,7 @@ export class ColumnarLineBucket implements Bucket {
             0;
 
         const estimatedVertices = len * 10;
-        let segment = this.segments.prepareSegment(estimatedVertices, this.layoutVertexArray, this.indexArray);
+        const segment = this.segments.prepareSegment(estimatedVertices, this.layoutVertexArray, this.indexArray);
 
         let currentVertexX: number = Number.MAX_SAFE_INTEGER;
         let currentVertexY: number;
@@ -523,12 +503,21 @@ export class ColumnarLineBucket implements Bucket {
             const vertex = geometryVector.getVertex(startOffset + len - 2);
             currentVertexX = vertex[0] * SCALE_FACTOR;
             currentVertexY = vertex[1] * SCALE_FACTOR;
-            const firstVertex =  geometryVector.getVertex(first);
+            const firstVertex = geometryVector.getVertex(first);
 
             nextNormal = VectorUtils.sub(firstVertex[0] * SCALE_FACTOR, firstVertex[1] * SCALE_FACTOR, currentVertexX, currentVertexY)._unit()._perp();
         }
 
         const end = startOffset + len;
+
+        // Check first vertex bounds
+        const firstVertex = geometryVector.getVertex(first);
+        const scaledX = firstVertex[0] * SCALE_FACTOR;
+        const scaledY = firstVertex[1] * SCALE_FACTOR;
+
+        if (Math.abs(scaledX) > MAX || Math.abs(scaledY) > MAX) {
+            console.error('COORDINATE OUT OF BOUNDS!', scaledX, scaledY);
+        }
 
         for (let i = first; i < end; i++) {
             if(i !== end - 1){
@@ -618,7 +607,6 @@ export class ColumnarLineBucket implements Bucket {
                             _mult(sharpCornerOffset / prevSegmentLength)._round());
 
                     this.updateDistance(prevVertexX, prevVertexY, newPrevVertex.x, newPrevVertex.y);
-                    segment = this.ensureSegmentCapacity(segment, 10);
                     this.addCurrentVertex(newPrevVertex.x, newPrevVertex.y, prevNormal, 0, 0, segment);
                     prevVertexX = newPrevVertex.x;
                     prevVertexY = newPrevVertex.y;
@@ -653,11 +641,10 @@ export class ColumnarLineBucket implements Bucket {
             }
 
             // Calculate how far along the line the currentVertex is
-            if (prevVertexX !== Number.MAX_SAFE_INTEGER) this.updateDistance(prevVertexX, prevVertexY,  currentVertexX, currentVertexY);
+            if (prevVertexX !== Number.MAX_SAFE_INTEGER) this.updateDistance(prevVertexX, prevVertexY, currentVertexX, currentVertexY);
 
             if (currentJoin === 'miter') {
                 joinNormal._mult(miterLength);
-                segment = this.ensureSegmentCapacity(segment, 10);
                 this.addCurrentVertex(currentVertexX, currentVertexY, joinNormal, 0, 0, segment);
 
             } else if (currentJoin === 'flipbevel') {
@@ -671,9 +658,7 @@ export class ColumnarLineBucket implements Bucket {
                     const bevelLength = miterLength * prevNormal.add(nextNormal).mag() / prevNormal.sub(nextNormal).mag();
                     joinNormal._perp()._mult(bevelLength * (lineTurnsLeft ? -1 : 1));
                 }
-                segment = this.ensureSegmentCapacity(segment, 10);
                 this.addCurrentVertex(currentVertexX, currentVertexY, joinNormal, 0, 0, segment);
-                segment = this.ensureSegmentCapacity(segment, 10);
                 this.addCurrentVertex(currentVertexX, currentVertexY, joinNormal.mult(-1), 0, 0, segment);
 
             } else if (currentJoin === 'bevel' || currentJoin === 'fakeround') {
@@ -683,7 +668,6 @@ export class ColumnarLineBucket implements Bucket {
 
                 // Close previous segment with a bevel
                 if (prevVertexX !== Number.MAX_SAFE_INTEGER) {
-                    segment = this.ensureSegmentCapacity(segment, 10);
                     this.addCurrentVertex(currentVertexX, currentVertexY, prevNormal, offsetA, offsetB, segment);
                 }
 
@@ -699,50 +683,42 @@ export class ColumnarLineBucket implements Bucket {
                     for (let m = 1; m < n; m++) {
                         let t = m / n;
                         if (t !== 0.5) {
-                            // approximate spherical interpolation https://observablehq.com/@mourner/approximating-geometric-slerp
+                            // approximate spherical interpolation [https://observablehq.com/@mourner/approximating-geometric-slerp](https://observablehq.com/@mourner/approximating-geometric-slerp)
                             const t2 = t - 0.5;
                             const A = 1.0904 + cosAngle * (-3.2452 + cosAngle * (3.55645 - cosAngle * 1.43519));
                             const B = 0.848013 + cosAngle * (-1.06021 + cosAngle * 0.215638);
                             t = t + t * t2 * (t - 1) * (A * t2 * t2 + B);
                         }
                         const extrude = nextNormal.sub(prevNormal)._mult(t)._add(prevNormal)._unit()._mult(lineTurnsLeft ? -1 : 1);
-                        segment = this.ensureSegmentCapacity(segment, 10);
                         this.addHalfVertex(currentVertexX, currentVertexY, extrude.x, extrude.y, false, lineTurnsLeft, 0, segment);
                     }
                 }
 
                 if (nextVertexX !== Number.MAX_SAFE_INTEGER) {
                     // Start next segment
-                    segment = this.ensureSegmentCapacity(segment, 10);
                     this.addCurrentVertex(currentVertexX, currentVertexY, nextNormal, -offsetA, -offsetB, segment);
                 }
 
             } else if (currentJoin === 'butt') {
-                segment = this.ensureSegmentCapacity(segment, 10);
                 this.addCurrentVertex(currentVertexX, currentVertexY, joinNormal, 0, 0, segment); // butt cap
 
             } else if (currentJoin === 'square') {
                 const offset = prevVertexX !== Number.MAX_SAFE_INTEGER ? 1 : -1; // closing or starting square cap
-                segment = this.ensureSegmentCapacity(segment, 10);
                 this.addCurrentVertex(currentVertexX, currentVertexY, joinNormal, offset, offset, segment);
 
             } else if (currentJoin === 'round') {
                 if (prevVertexX !== Number.MAX_SAFE_INTEGER) {
                     // Close previous segment with butt
-                    segment = this.ensureSegmentCapacity(segment, 10);
                     this.addCurrentVertex(currentVertexX, currentVertexY, prevNormal, 0, 0, segment);
 
                     // Add round cap or linejoin at end of segment
-                    segment = this.ensureSegmentCapacity(segment, 10);
                     this.addCurrentVertex(currentVertexX, currentVertexY, prevNormal, 1, 1, segment, true);
                 }
                 if (nextVertexX !== Number.MAX_SAFE_INTEGER) {
                     // Add round cap before first segment
-                    segment = this.ensureSegmentCapacity(segment, 10);
                     this.addCurrentVertex(currentVertexX, currentVertexY, nextNormal, -1, -1, segment, true);
 
                     // Start next segment with a butt
-                    segment = this.ensureSegmentCapacity(segment, 10);
                     this.addCurrentVertex(currentVertexX, currentVertexY, nextNormal, 0, 0, segment);
                 }
             }
@@ -756,14 +732,12 @@ export class ColumnarLineBucket implements Bucket {
                     const newCurrentVertex = VectorUtils.add(currentVertexX, currentVertexY, a.x, a.y);
 
                     this.updateDistance(currentVertexX, currentVertexY, newCurrentVertex.x, newCurrentVertex.y);
-                    segment = this.ensureSegmentCapacity(segment, 10);
-                    this.addCurrentVertex(newCurrentVertex.x, newCurrentVertex.y , nextNormal, 0, 0, segment);
+                    this.addCurrentVertex(newCurrentVertex.x, newCurrentVertex.y, nextNormal, 0, 0, segment);
                     currentVertexX = newCurrentVertex.x;
                     currentVertexY = newCurrentVertex.y;
                 }
             }
         }
-
     }
 
     addCurrentVertex(x: number, y: number, normal: Point, endLeft: number, endRight: number, segment: Segment, round: boolean = false) {
@@ -774,7 +748,7 @@ export class ColumnarLineBucket implements Bucket {
         const rightY = -normal.y - normal.x * endRight;
 
         this.addHalfVertex(x, y, leftX, leftY, round, false, endLeft, segment);
-        this.addHalfVertex(x ,y, rightX, rightY, round, true, -endRight, segment);
+        this.addHalfVertex(x, y, rightX, rightY, round, true, -endRight, segment);
 
         // There is a maximum "distance along the line" that we can store in the buffers.
         // When we get close to the distance, reset it to zero and add the vertex again with
@@ -812,7 +786,7 @@ export class ColumnarLineBucket implements Bucket {
 
         const e = segment.vertexLength++;
         if (this.e1 >= 0 && this.e2 >= 0) {
-            this.indexArray.emplaceBack(this.e1, e, this.e2);
+            this.indexArray.emplaceBack(this.e1, this.e2, e);
             segment.primitiveLength++;
 
             this.indexArrayLength += 3;
