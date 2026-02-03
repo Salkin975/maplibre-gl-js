@@ -131,7 +131,7 @@ function drawFillTiles(
         const stencil = painter.stencilModeForClipping(coord);
 
         program.draw(painter.context, drawMode, depthMode,
-            stencil, colorMode, CullFaceMode.backCCW, uniformValues, terrainData, projectionData,
+            stencil, colorMode, CullFaceMode.disabled, uniformValues, terrainData, projectionData,
             layer.id, bucket.layoutVertexBuffer, indexBuffer, segments,
             layer.paint, painter.transform.zoom, programConfiguration);
     }

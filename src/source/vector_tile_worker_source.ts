@@ -7,6 +7,7 @@ import {extend} from '../util/util';
 import {RequestPerformance} from '../util/performance';
 import {VectorTileOverzoomed, sliceVectorTileLayer, toVirtualVectorTile} from './vector_tile_overzoomed';
 import {MLTVectorTile} from './vector_tile_mlt';
+import {decodeTile, type FeatureTable} from '@maplibre/mlt';
 import type {
     WorkerSource,
     WorkerTileParameters,
@@ -21,6 +22,7 @@ import type {VectorTileLayerLike, VectorTileLike} from '@maplibre/vt-pbf';
 export type LoadVectorTileResult = {
     vectorTile: VectorTileLike;
     rawData: ArrayBufferLike;
+    featureTables?: FeatureTable[]; // Raw columnar data for ColumnarBuckets
     resourceTiming?: Array<PerformanceResourceTiming>;
 } & ExpiryData;
 
@@ -70,15 +72,27 @@ export class VectorTileWorkerSource implements WorkerSource {
     async loadVectorTile(params: WorkerTileParameters, abortController: AbortController): Promise<LoadVectorTileResult> {
         const response = await getArrayBuffer(params.request, abortController);
         try {
-            const vectorTile = params.encoding !== 'mlt' 
-                ? new VectorTile(new Protobuf(response.data)) 
-                : new MLTVectorTile(response.data);
-            return {
-                vectorTile,
-                rawData: response.data,
-                cacheControl: response.cacheControl,
-                expires: response.expires
-            };
+            if (params.encoding === 'mlt') {
+                // For MLT: decode to get raw FeatureTable[] for ColumnarBuckets
+                const featureTables = decodeTile(new Uint8Array(response.data));
+                // Also create VectorTile wrapper for traditional buckets
+                const vectorTile = new MLTVectorTile(response.data);
+                return {
+                    vectorTile,
+                    featureTables, // Raw columnar data
+                    rawData: response.data,
+                    cacheControl: response.cacheControl,
+                    expires: response.expires
+                };
+            } else {
+                const vectorTile = new VectorTile(new Protobuf(response.data));
+                return {
+                    vectorTile,
+                    rawData: response.data,
+                    cacheControl: response.cacheControl,
+                    expires: response.expires
+                };
+            }
         } catch (ex) {
             const bytes = new Uint8Array(response.data);
             const isGzipped = bytes[0] === 0x1f && bytes[1] === 0x8b;
@@ -98,6 +112,7 @@ export class VectorTileWorkerSource implements WorkerSource {
      * a `params.url` property) for fetching and producing a VectorTile object.
      */
     async loadTile(params: WorkerTileParameters): Promise<WorkerTileResult | null> {
+        console.log(params);
         const {uid: tileUid, overzoomParameters} = params;
 
         if (overzoomParameters) {
@@ -140,7 +155,15 @@ export class VectorTileWorkerSource implements WorkerSource {
             }
 
             workerTile.vectorTile = response.vectorTile;
-            const parsePromise = workerTile.parse(response.vectorTile, this.layerIndex, this.availableImages, this.actor, params.subdivisionGranularity);
+            const parsePromise = workerTile.parse(
+                response.vectorTile,
+                this.layerIndex,
+                this.availableImages,
+                this.actor,
+                params.subdivisionGranularity,
+                params.encoding,
+                response.featureTables
+            );
             this.loaded[tileUid] = workerTile;
             // keep the original fetching state so that reload tile can pick it up if the original parse is cancelled by reloads' parse
             this.fetching[tileUid] = {rawTileData, cacheControl, resourceTiming};
@@ -172,7 +195,7 @@ export class VectorTileWorkerSource implements WorkerSource {
 
         const cacheKey = `${maxZoomTileID.key}_${tileID.key}`;
         const cachedOverzoomTile = this.overzoomedTileResultCache.get(cacheKey);
-        
+
         if (cachedOverzoomTile) {
             return cachedOverzoomTile;
         }
@@ -208,7 +231,7 @@ export class VectorTileWorkerSource implements WorkerSource {
         const workerTile = this.loaded[uid];
         workerTile.showCollisionBoxes = params.showCollisionBoxes;
         if (workerTile.status === 'parsing') {
-            const result = await workerTile.parse(workerTile.vectorTile, this.layerIndex, this.availableImages, this.actor, params.subdivisionGranularity);
+            const result = await workerTile.parse(workerTile.vectorTile, this.layerIndex, this.availableImages, this.actor, params.subdivisionGranularity, params.encoding);
             // if we have cancelled the original parse, make sure to pass the rawTileData from the original fetch
             let parseResult: WorkerTileResult;
             if (this.fetching[uid]) {
@@ -224,7 +247,7 @@ export class VectorTileWorkerSource implements WorkerSource {
         // if there was no vector tile data on the initial load, don't try and re-parse tile
         if (workerTile.status === 'done' && workerTile.vectorTile) {
             // this seems like a missing case where cache control is lost? see #3309
-            return workerTile.parse(workerTile.vectorTile, this.layerIndex, this.availableImages, this.actor, params.subdivisionGranularity);
+            return workerTile.parse(workerTile.vectorTile, this.layerIndex, this.availableImages, this.actor, params.subdivisionGranularity, params.encoding);
         }
     }
 

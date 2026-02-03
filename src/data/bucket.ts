@@ -11,6 +11,8 @@ import type {SubdivisionGranularitySetting} from '../render/subdivision_granular
 import type {DashEntry} from '../render/line_atlas';
 import type {Feature as StyleFeature} from '@maplibre/maplibre-gl-style-spec';
 import type {VectorTileFeatureLike, VectorTileLayerLike} from '@maplibre/vt-pbf';
+import {type FeatureTable} from '@maplibre/mlt';
+import {VectorTileLayer} from '@mapbox/vector-tile';
 
 export type BucketParameters<Layer extends TypedStyleLayer> = {
     index: number;
@@ -21,6 +23,7 @@ export type BucketParameters<Layer extends TypedStyleLayer> = {
     collisionBoxArray: CollisionBoxArray;
     sourceLayerIndex: number;
     sourceID: string;
+    encoding?: string;
 };
 
 export type PopulateParameters = {
@@ -86,8 +89,10 @@ export interface Bucket {
     readonly layers: Array<any>;
     readonly stateDependentLayers: Array<any>;
     readonly stateDependentLayerIds: Array<string>;
-    populate(features: Array<IndexedFeature>, options: PopulateParameters, canonical: CanonicalTileID): void;
-    update(states: FeatureStates, vtLayer: VectorTileLayerLike, imagePositions: {[_: string]: ImagePosition}, dashPositions: Record<string, DashEntry>): void;
+    populate?(features: Array<IndexedFeature>, options: PopulateParameters, canonical: CanonicalTileID): void;
+    populateColumnar?(table: FeatureTable, options: PopulateParameters, canonical: CanonicalTileID): void;
+    update?(states: FeatureStates, vtLayer: VectorTileLayerLike, imagePositions: {[_: string]: ImagePosition}, dashPositions: Record<string, DashEntry>): void;
+    updateColumnar?(states: FeatureStates, vtLayer: VectorTileLayerLike, imagePositions: {[_: string]: ImagePosition}): void;
     isEmpty(): boolean;
     upload(context: Context): void;
     uploadPending(): boolean;

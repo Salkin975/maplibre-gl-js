@@ -11,7 +11,12 @@ class MLTVectorTileFeature implements VectorTileFeatureLike {
 
     constructor(feature: MLTFeature, extent: number) {
         this._featureData = feature;
-        this.properties = this._featureData.properties || {};
+        const rawProps = this._featureData.properties || {};
+        this.properties = {};
+        for (const key of Object.keys(rawProps)) {
+            const val = rawProps[key];
+            this.properties[key] = typeof val === 'bigint' ? Number(val) : val;
+        }
         switch (this._featureData.geometry?.type) {
             case GEOMETRY_TYPE.POINT:
             case GEOMETRY_TYPE.MULTIPOINT:

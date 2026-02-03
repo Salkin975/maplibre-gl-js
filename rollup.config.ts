@@ -46,7 +46,8 @@ const config: RollupOptions[] = [{
         sourcemap: true,
         indent: false,
         intro: fs.readFileSync('build/rollup/bundle_prelude.js', 'utf8'),
-        banner
+        banner,
+        inlineDynamicImports: true
     },
     watch: {
         // give the staging chunks a chance to finish before rebuilding the dev build

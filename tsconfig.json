@@ -1,6 +1,7 @@
 {
   "compilerOptions": {
     "forceConsistentCasingInFileNames": true,
+    "outDir": "staging/maplibregl",
     "allowJs": true,
     "allowSyntheticDefaultImports": true,
     "checkJs": true,

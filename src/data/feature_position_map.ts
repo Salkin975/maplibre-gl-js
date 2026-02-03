@@ -82,6 +82,12 @@ export class FeaturePositionMap {
 }
 
 function getNumericId(value: unknown) {
+    if (typeof value === 'bigint') {
+        if (value >= Number.MIN_SAFE_INTEGER && value <= Number.MAX_SAFE_INTEGER) {
+            return Number(value);
+        }
+        return murmur3(String(value));
+    }
     const numValue = +value;
     if (!isNaN(numValue) && numValue <= Number.MAX_SAFE_INTEGER) {
         return numValue;

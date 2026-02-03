@@ -9,6 +9,7 @@ import type {LayerSpecification} from '@maplibre/maplibre-gl-style-spec';
 import type {BucketParameters} from '../../data/bucket';
 import type {FillLayoutProps, FillPaintProps} from './fill_style_layer_properties.g';
 import type {EvaluationParameters} from '../evaluation_parameters';
+import {ColumnarFillBucket} from '../../data/bucket/columnar/columnar_fill_bucket';
 
 export const isFillStyleLayer = (layer: StyleLayer): layer is FillStyleLayer => layer.type === 'fill';
 
@@ -34,6 +35,9 @@ export class FillStyleLayer extends StyleLayer {
     }
 
     createBucket(parameters: BucketParameters<any>) {
+        if(parameters.encoding && parameters.encoding === 'mlt') {
+            return new ColumnarFillBucket(parameters);
+        }
         return new FillBucket(parameters);
     }
 
