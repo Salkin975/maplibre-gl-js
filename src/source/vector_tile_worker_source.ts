@@ -112,7 +112,6 @@ export class VectorTileWorkerSource implements WorkerSource {
      * a `params.url` property) for fetching and producing a VectorTile object.
      */
     async loadTile(params: WorkerTileParameters): Promise<WorkerTileResult | null> {
-        console.log(params);
         const {uid: tileUid, overzoomParameters} = params;
 
         if (overzoomParameters) {

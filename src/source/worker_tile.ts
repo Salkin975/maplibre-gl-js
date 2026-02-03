@@ -65,8 +65,6 @@ export class WorkerTile {
         this.status = 'parsing';
         this.data = data;
 
-        console.log('data: ', data);
-
         this.collisionBoxArray = new CollisionBoxArray();
 
         // Determine if MLT encoding is being used
@@ -91,8 +89,6 @@ export class WorkerTile {
             availableImages,
             subdivisionGranularity
         };
-
-        console.log('mltencoding: ', isMltEncoding);
 
         const layerFamilies = layerIndex.familiesBySource[this.source];
 
@@ -165,7 +161,6 @@ export class WorkerTile {
                     ...(isMltEncoding && {encoding: 'mlt'}),
                     ...(!isMltEncoding && encoding && {encoding: encoding})
                 });
-                console.log(bucket);
 
                 // Some layer types (background, raster, etc.) don't have buckets
                 if (!bucket) continue;

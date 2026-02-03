@@ -80,7 +80,6 @@ export class LineStyleLayer extends StyleLayer {
     }
 
     createBucket(parameters: BucketParameters<any>) {
-        console.log('createBucket', parameters);
         if(parameters.encoding && parameters.encoding == 'mlt'){
             return new ColumnarLineBucket(parameters);
         }

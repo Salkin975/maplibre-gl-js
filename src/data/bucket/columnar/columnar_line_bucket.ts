@@ -510,15 +510,6 @@ export class ColumnarLineBucket implements Bucket {
 
         const end = startOffset + len;
 
-        // Check first vertex bounds
-        const firstVertex = geometryVector.getVertex(first);
-        const scaledX = firstVertex[0] * SCALE_FACTOR;
-        const scaledY = firstVertex[1] * SCALE_FACTOR;
-
-        if (Math.abs(scaledX) > MAX || Math.abs(scaledY) > MAX) {
-            console.error('COORDINATE OUT OF BOUNDS!', scaledX, scaledY);
-        }
-
         for (let i = first; i < end; i++) {
             if(i !== end - 1){
                 const v = geometryVector.getVertex(i + 1);
