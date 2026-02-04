@@ -1,3 +1,5 @@
+import { FeatureTable } from "@maplibre/mlt";
+
 /**
  * Replace tokens in a string template with values in an object
  *
@@ -13,5 +15,17 @@ export function resolveTokens(
 ): string {
     return text.replace(/{([^{}]+)}/g, (match, key: string) => {
         return properties && key in properties ? String(properties[key]) : '';
+    });
+}
+
+export function resolveTokensMlt(
+    featureTable: FeatureTable,
+    index: number,
+    text: string
+): string {
+    return text.replace(/{([^{}]+)}/g, (match, key: string) => {
+        const propertyVector = featureTable.getPropertyVector(key);
+        const value = propertyVector?.getValue(index);
+        return value? String(value) : '';
     });
 }

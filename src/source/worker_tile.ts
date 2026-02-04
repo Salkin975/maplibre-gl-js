@@ -3,6 +3,7 @@ import {performSymbolLayout} from '../symbol/symbol_layout';
 import {CollisionBoxArray} from '../data/array_types.g';
 import {DictionaryCoder} from '../util/dictionary_coder';
 import {SymbolBucket} from '../data/bucket/symbol_bucket';
+import {ColumnarSymbolBucket} from '../data/bucket/columnar/columnar_symbol_bucket';
 import {LineBucket} from '../data/bucket/line_bucket';
 import {FillBucket} from '../data/bucket/fill_bucket';
 import {FillExtrusionBucket} from '../data/bucket/fill_extrusion_bucket';
@@ -256,10 +257,10 @@ export class WorkerTile {
             const bucket = buckets[key];
 
             // Symbol buckets
-            if (bucket instanceof SymbolBucket) {
+            if (bucket instanceof SymbolBucket || bucket instanceof ColumnarSymbolBucket) {
                 recalculateLayers(bucket.layers, this.zoom, availableImages);
                 performSymbolLayout({
-                    bucket,
+                    bucket: bucket as SymbolBucket,
                     glyphMap,
                     glyphPositions: glyphAtlas.positions,
                     imageMap: iconMap,
