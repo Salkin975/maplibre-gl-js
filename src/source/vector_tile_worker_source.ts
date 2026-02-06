@@ -75,8 +75,8 @@ export class VectorTileWorkerSource implements WorkerSource {
             if (params.encoding === 'mlt') {
                 // For MLT: decode to get raw FeatureTable[] for ColumnarBuckets
                 const featureTables = decodeTile(new Uint8Array(response.data));
-                // Also create VectorTile wrapper for traditional buckets
-                const vectorTile = new MLTVectorTile(response.data);
+                // Create VectorTile wrapper from already-decoded feature tables
+                const vectorTile = new MLTVectorTile(featureTables);
                 return {
                     vectorTile,
                     featureTables, // Raw columnar data

@@ -1,5 +1,5 @@
 import Point from '@mapbox/point-geometry';
-import {type FeatureTable, decodeTile, type Feature as MLTFeature, GEOMETRY_TYPE} from '@maplibre/mlt';
+import {type FeatureTable, type Feature as MLTFeature, GEOMETRY_TYPE} from '@maplibre/mlt';
 import type {VectorTileFeatureLike, VectorTileLayerLike, VectorTileLike} from '@maplibre/vt-pbf';
 
 class MLTVectorTileFeature implements VectorTileFeatureLike {
@@ -57,7 +57,7 @@ class MLTVectorTileLayer implements VectorTileLayerLike {
     version: number;
     extent: number;
     features: MLTFeature[] = [];
-    
+
     constructor(featureTable: FeatureTable) {
         this.featureTable = featureTable;
         this.name = featureTable.name;
@@ -75,8 +75,7 @@ class MLTVectorTileLayer implements VectorTileLayerLike {
 export class MLTVectorTile implements VectorTileLike {
     layers: Record<string, VectorTileLayerLike> = {};
 
-    constructor(buffer: ArrayBuffer) {
-        const features = decodeTile(new Uint8Array(buffer));
-        this.layers = features.reduce((acc, f) => ({...acc, [f.name]: new MLTVectorTileLayer(f)}), {});
+    constructor(featureTables: FeatureTable[]) {
+        this.layers = featureTables.reduce((acc, f) => ({...acc, [f.name]: new MLTVectorTileLayer(f)}), {});
     }
 }
