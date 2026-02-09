@@ -4,15 +4,14 @@ import {EXTENT} from '../../extent';
 import {members as layoutAttributes} from '../fill_attributes';
 import {SegmentVector} from '../../segment';
 import {ProgramConfigurationSet} from '../../program_configuration';
-import {LineIndexArray, TriangleIndexArray} from '../../index_array_type';
+import {LineIndexArray, TriangleIndexArray} from '../../array_types.g';
 import {register} from '../../../util/web_worker_transfer';
-import {hasPattern, addPatternDependencies} from '../pattern_bucket_features';
+import {hasPattern} from '../pattern_bucket_features';
 
 import type {
     Bucket,
     BucketParameters,
     BucketFeature,
-    IndexedFeature,
     PopulateParameters
 } from '../../bucket';
 import type {FillStyleLayer} from '../../../style/style_layer/fill_style_layer';
@@ -71,12 +70,25 @@ export class ColumnarFillBucket implements Bucket {
         this.stateDependentLayerIds = this.layers.filter((l) => l.isStateDependent()).map((l) => l.id);
     }
 
-    update(states: FeatureStates, vtLayer: VectorTileLayer, imagePositions: Record<string, ImagePosition>, dashPositions?: Record<string, DashEntry>): void {
-        throw new Error('Method not implemented.');
-    }
-
-    populate(features: IndexedFeature[], options: PopulateParameters, canonical: CanonicalTileID): void {
-        throw new Error('Method not implemented.');
+    private createFeature(featureTable: FeatureTable, featureIndex: number): Feature {
+        const properties: Record<string, unknown> = {};
+        const propertyVectors = featureTable.propertyVectors;
+        if (propertyVectors) {
+            for (const propertyColumn of propertyVectors) {
+                if (!propertyColumn) continue;
+                const value = propertyColumn.getValue(featureIndex);
+                if (value !== null) {
+                    properties[propertyColumn.name] = typeof value === 'bigint' ? Number(value) : value;
+                }
+            }
+        }
+        const id = featureTable.idVector ? Number(featureTable.idVector.getValue(featureIndex)) : featureIndex;
+        return {
+            type: 'Polygon',
+            id,
+            properties,
+            geometry: []
+        } as Feature;
     }
 
     populateColumnar(featureTable: FeatureTable, options: PopulateParameters, canonical: CanonicalTileID) {
@@ -129,8 +141,7 @@ export class ColumnarFillBucket implements Bucket {
                 return;
             }
 
-            //TODO: return if selectionVector limit is zero
-            this.addPolygons(selectionVector, gpuVector, featureTable.extent, 0, canonical, {});
+            this.addPolygons(selectionVector, gpuVector, featureTable, featureTable.extent, canonical, {});
             if (!gpuVector.topologyVector) {
                 return;
             }
@@ -178,7 +189,7 @@ export class ColumnarFillBucket implements Bucket {
                 return;
             }
 
-            this.addGeometryPolygons(selectionVector, geometryVector, featureTable.extent, 0, canonical, {});
+            this.addGeometryPolygons(selectionVector, geometryVector, featureTable, featureTable.extent, canonical, {});
             if (!geometryVector.topologyVector) {
                 return;
             }
@@ -237,8 +248,8 @@ export class ColumnarFillBucket implements Bucket {
     addGeometryPolygons(
         selectionVector: SelectionVector,
         geometryVector: IGeometryVector,
+        featureTable: FeatureTable,
         extent: number,
-        index: number,
         canonical: CanonicalTileID,
         imagePositions: { [_: string]: ImagePosition }
     ) {
@@ -251,6 +262,11 @@ export class ColumnarFillBucket implements Bucket {
             return;
         }
 
+        const paintOptions = {
+            imagePositions,
+            canonical
+        };
+
         let vertexBufferOffset = 0;
 
         if (!geometryOffsets) {
@@ -258,36 +274,20 @@ export class ColumnarFillBucket implements Bucket {
                 const featureOffset = Number(selectionVector.getIndex(i));
                 const secondFeatureOffset = featureOffset + 1;
                 vertexBufferOffset = this.updateVertexBuffer(featureOffset, secondFeatureOffset, partOffsets, ringOffsets, geometryVector, vertexBufferOffset, extent);
+                const feature = this.createFeature(featureTable, featureOffset);
+                this.programConfigurations.populatePaintArrays(this.layoutVertexArray.length, feature, featureOffset, paintOptions);
             }
         } else {
             for (let i = 0; i < selectionVector.limit; i++) {
                 const featureOffset = Number(selectionVector.getIndex(i));
                 vertexBufferOffset = this.updateVertexBuffer(geometryOffsets[featureOffset], geometryOffsets[featureOffset + 1], partOffsets, ringOffsets, geometryVector, vertexBufferOffset, extent);
+                const feature = this.createFeature(featureTable, featureOffset);
+                this.programConfigurations.populatePaintArrays(this.layoutVertexArray.length, feature, featureOffset, paintOptions);
             }
         }
-        // Erstelle ein gültiges Feature-Objekt anstatt null
-        const feature : Feature = {
-            type: 'Polygon',
-            id: index,
-            properties: {},
-            geometry: []  // Hier ggf. mit tatsächlichen Ringen füllen
-        };
-
-        // Konvertiere imagePositions zu PaintOptions Format
-        const paintOptions = {
-            imagePositions,
-            canonical
-        };
-
-        this.programConfigurations.populatePaintArrays(
-            this.layoutVertexArray.length,
-            feature,
-            index,
-            paintOptions
-        );
     }
 
-    addPolygons(selectionVector: SelectionVector, gpuVector: IGpuVector, extent: number, index: number, canonical: CanonicalTileID, imagePositions: {
+    addPolygons(selectionVector: SelectionVector, gpuVector: IGpuVector, featureTable: FeatureTable, extent: number, canonical: CanonicalTileID, imagePositions: {
         [_: string]: ImagePosition;
     }) {
         const triangleOffsets = gpuVector.triangleOffsets;
@@ -301,6 +301,10 @@ export class ColumnarFillBucket implements Bucket {
         }
 
         const scaleFactor = EXTENT / extent;
+        const paintOptions = {
+            imagePositions,
+            canonical
+        };
         let vertexBufferOffset = 0;
 
         for (let i = 0; i < selectionVector.limit; i++) {
@@ -345,22 +349,10 @@ export class ColumnarFillBucket implements Bucket {
             triangleSegment.vertexLength += numVertices;
             triangleSegment.primitiveLength += numTriangles;
             vertexBufferOffset = triangleSegment.vertexLength;
+
+            const feature = this.createFeature(featureTable, featureOffset);
+            this.programConfigurations.populatePaintArrays(this.layoutVertexArray.length, feature, featureOffset, paintOptions);
         }
-        // Erstelle ein gültiges Feature-Objekt anstatt null
-        const feature : Feature = {
-            type: 'Polygon',
-            id: index,
-            properties: {},
-            geometry: []  // Hier ggf. mit tatsächlichen Ringen füllen
-        };
-
-        // Konvertiere imagePositions zu PaintOptions Format
-        const paintOptions = {
-            imagePositions,
-            canonical
-        };
-
-        this.programConfigurations.populatePaintArrays(this.layoutVertexArray.length, feature, index, paintOptions);
     }
 
     addGeometryPolygonsWithoutSelectionVector(geometryVector: IGeometryVector, extent: number, index: number, canonical: CanonicalTileID, imagePositions: {

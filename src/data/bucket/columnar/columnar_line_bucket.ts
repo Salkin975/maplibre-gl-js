@@ -156,6 +156,10 @@ export class ColumnarLineBucket implements Bucket {
         this.hasDependencies = hasPattern('line', this.layers, options);
 
         const filterSpecification = this.layers[0].filter as any;
+        if (!filterSpecification) {
+            //TODO: handle line layers without filter
+            return;
+        }
         const selectionVector = filter(featureTable, filterSpecification);
 
         if(selectionVector.limit === 0){
