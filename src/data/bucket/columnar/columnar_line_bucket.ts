@@ -148,6 +148,16 @@ export class ColumnarLineBucket implements Bucket {
         this.stateDependentLayerIds = this.layers.filter((l) => l.isStateDependent()).map((l) => l.id);
     }
 
+    populate<T>(data: T, options: PopulateParameters, canonical: CanonicalTileID): void {
+        // ColumnarLineBucket only supports FeatureTable
+        this.populateColumnar(data as FeatureTable, options, canonical);
+    }
+
+    update<T>(states: FeatureStates, layerData: T, imagePositions: {[_: string]: ImagePosition}): void {
+        // ColumnarLineBucket only supports FeatureTable/VectorTileLayer
+        this.updateColumnar(states, layerData as VectorTileLayer, imagePositions);
+    }
+
     populateColumnar(featureTable: FeatureTable, options: PopulateParameters, canonical: CanonicalTileID) {
         this.populateLine(featureTable, options, canonical);
     }

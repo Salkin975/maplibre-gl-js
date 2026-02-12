@@ -114,7 +114,11 @@ export class SymbolStyleLayer extends StyleLayer {
     }
 
     createBucket(parameters: BucketParameters<any>) {
+<<<<<<< HEAD
         if(parameters.encoding && parameters.encoding == 'mlt'){
+=======
+        if (parameters.encoding && parameters.encoding === 'mlt') {
+>>>>>>> dea8843b0 (update)
             return new ColumnarSymbolBucket(parameters);
         }
         return new SymbolBucket(parameters);

@@ -404,12 +404,14 @@ export class ColumnarSymbolBucket implements Bucket {
         this.sourceID = options.sourceID;
     }
 
-    update(states: FeatureStates, vtLayer: VectorTileLayer, imagePositions: { [_: string]: ImagePosition }): void {
-        throw new Error('Method not implemented.');
+    update<T>(states: FeatureStates, layerData: T, imagePositions: { [_: string]: ImagePosition }): void {
+        // ColumnarSymbolBucket only supports FeatureTable/VectorTileLayer
+        this.updateColumnar(states, layerData as VectorTileLayer, imagePositions);
     }
 
-    populate(features: IndexedFeature[], options: PopulateParameters, canonical: CanonicalTileID): void {
-        throw new Error('Method not implemented.');
+    populate<T>(data: T, options: PopulateParameters, canonical: CanonicalTileID): void {
+        // ColumnarSymbolBucket only supports FeatureTable
+        this.populateColumnar(data as FeatureTable, options, canonical);
     }
 
     createArrays() {

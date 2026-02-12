@@ -429,7 +429,9 @@ export class SymbolBucket implements Bucket {
         }
     }
 
-    populate(features: Array<IndexedFeature>, options: PopulateParameters, canonical: CanonicalTileID) {
+    populate<T>(data: T, options: PopulateParameters, canonical: CanonicalTileID) {
+        const features = data as Array<IndexedFeature>;
+
         const layer = this.layers[0];
         const layout = layer.layout;
 
@@ -557,7 +559,10 @@ export class SymbolBucket implements Bucket {
         }
     }
 
-    update(states: FeatureStates, vtLayer: VectorTileLayerLike, imagePositions: {[_: string]: ImagePosition}) {
+    update<T>(states: FeatureStates, layerData: T, imagePositions: {[_: string]: ImagePosition}) {
+        // SymbolBucket only supports VectorTileLayerLike
+        const vtLayer = layerData as VectorTileLayerLike;
+
         if (!this.stateDependentLayers.length) return;
         this.text.programConfigurations.updatePaintArrays(states, vtLayer, this.layers, {
             imagePositions

@@ -97,7 +97,10 @@ export class FillExtrusionBucket implements Bucket {
         this.stateDependentLayerIds = this.layers.filter((l) => l.isStateDependent()).map((l) => l.id);
     }
 
-    populate(features: Array<IndexedFeature>, options: PopulateParameters, canonical: CanonicalTileID) {
+    populate<T>(data: T, options: PopulateParameters, canonical: CanonicalTileID) {
+        // FillExtrusionBucket only supports IndexedFeature[]
+        const features = data as Array<IndexedFeature>;
+
         this.features = [];
         this.hasDependencies = hasPattern('fill-extrusion', this.layers, options);
 
@@ -134,7 +137,10 @@ export class FillExtrusionBucket implements Bucket {
         }
     }
 
-    update(states: FeatureStates, vtLayer: VectorTileLayerLike, imagePositions: {[_: string]: ImagePosition}) {
+    update<T>(states: FeatureStates, layerData: T, imagePositions: {[_: string]: ImagePosition}) {
+        // FillExtrusionBucket only supports VectorTileLayerLike
+        const vtLayer = layerData as VectorTileLayerLike;
+
         if (!this.stateDependentLayers.length) return;
         this.programConfigurations.updatePaintArrays(states, vtLayer, this.stateDependentLayers, {
             imagePositions

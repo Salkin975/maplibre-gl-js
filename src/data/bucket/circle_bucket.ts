@@ -81,7 +81,10 @@ export class CircleBucket<Layer extends CircleStyleLayer | HeatmapStyleLayer> im
         this.stateDependentLayerIds = this.layers.filter((l) => l.isStateDependent()).map((l) => l.id);
     }
 
-    populate(features: Array<IndexedFeature>, options: PopulateParameters, canonical: CanonicalTileID) {
+    populate<T>(data: T, options: PopulateParameters, canonical: CanonicalTileID) {
+        // CircleBucket only supports IndexedFeature[]
+        const features = data as Array<IndexedFeature>;
+
         const styleLayer = this.layers[0];
         const bucketFeatures: BucketFeature[] = [];
         let circleSortKey = null;
@@ -140,7 +143,10 @@ export class CircleBucket<Layer extends CircleStyleLayer | HeatmapStyleLayer> im
         }
     }
 
-    update(states: FeatureStates, vtLayer: VectorTileLayerLike, imagePositions: {[_: string]: ImagePosition}) {
+    update<T>(states: FeatureStates, layerData: T, imagePositions: {[_: string]: ImagePosition}) {
+        // CircleBucket only supports VectorTileLayerLike
+        const vtLayer = layerData as VectorTileLayerLike;
+
         if (!this.stateDependentLayers.length) return;
         this.programConfigurations.updatePaintArrays(states, vtLayer, this.stateDependentLayers, {
             imagePositions

@@ -20,7 +20,7 @@ import type {IndexBuffer} from '../../../gl/index_buffer';
 import type {VertexBuffer} from '../../../gl/vertex_buffer';
 import type {FeatureStates} from '../../../source/source_state';
 import type {ImagePosition} from '../../../render/image_atlas';
-import {type FeatureTable, filter, type IGeometryVector, type IGpuVector, type SelectionVector} from '@maplibre/mlt';
+import {type FeatureTable, filter, type IGeometryVector, type SelectionVector} from '@maplibre/mlt';
 import {type VectorTileLayer} from '@mapbox/vector-tile';
 import earcut from 'earcut';
 import {type Feature} from '@maplibre/maplibre-gl-style-spec';
@@ -70,6 +70,7 @@ export class ColumnarFillBucket implements Bucket {
         this.stateDependentLayerIds = this.layers.filter((l) => l.isStateDependent()).map((l) => l.id);
     }
 
+<<<<<<< HEAD
     private createFeature(featureTable: FeatureTable, featureIndex: number): Feature {
         const properties: Record<string, unknown> = {};
         const propertyVectors = featureTable.propertyVectors;
@@ -89,6 +90,16 @@ export class ColumnarFillBucket implements Bucket {
             properties,
             geometry: []
         } as Feature;
+=======
+    update<T>(states: FeatureStates, layerData: T, imagePositions: Record<string, ImagePosition>, dashPositions?: Record<string, DashEntry>): void {
+        // ColumnarFillBucket only supports FeatureTable
+        this.updateColumnar(states, layerData as VectorTileLayer, imagePositions);
+    }
+
+    populate<T>(data: T, options: PopulateParameters, canonical: CanonicalTileID): void {
+        // ColumnarFillBucket only supports FeatureTable
+        this.populateColumnar(data as FeatureTable, options, canonical);
+>>>>>>> dea8843b0 (update)
     }
 
     populateColumnar(featureTable: FeatureTable, options: PopulateParameters, canonical: CanonicalTileID) {
@@ -106,9 +117,12 @@ export class ColumnarFillBucket implements Bucket {
         }
 
         const filterSpecification = this.layers[0].filter as any;
+        const geometryVector = featureTable.geometryVector as IGeometryVector;
 
-        //this.layers[0].minzoom
+        if (!filterSpecification) {
+            this.addGeometryPolygonsWithoutSelectionVector(geometryVector, featureTable.extent, 0, canonical, {});
 
+<<<<<<< HEAD
         let geometryVector = featureTable.geometryVector;
 
         if ('triangleOffsets' in geometryVector) {
@@ -190,23 +204,45 @@ export class ColumnarFillBucket implements Bucket {
             }
 
             this.addGeometryPolygons(selectionVector, geometryVector, featureTable, featureTable.extent, canonical, {});
+=======
+>>>>>>> dea8843b0 (update)
             if (!geometryVector.topologyVector) {
                 return;
             }
 
             if (geometryVector.topologyVector.geometryOffsets && geometryVector.topologyVector.partOffsets
                 && geometryVector.topologyVector.ringOffsets) {
-                this.addMultiPolygonOutlinesWithSelectionVector(featureTable, selectionVector, canonical);
+                this.addMultiPolygonOutlinesWithoutSelectionVector(featureTable, geometryVector.numGeometries, canonical);
                 return;
             }
 
             if (geometryVector.topologyVector.partOffsets && geometryVector.topologyVector.ringOffsets) {
-                this.addPolygonOutlinesWithSelectionVector(featureTable, selectionVector, canonical);
+                this.addPolygonOutlinesWithoutSelectionVector(featureTable, geometryVector.numGeometries, canonical);
                 return;
             }
-
             return;
+        }
 
+        const selectionVector = filter(featureTable, filterSpecification);
+
+        if (selectionVector.limit === 0) {
+            return;
+        }
+
+        this.addGeometryPolygons(selectionVector, geometryVector, featureTable.extent, 0, canonical, {});
+        if (!geometryVector.topologyVector) {
+            return;
+        }
+
+        if (geometryVector.topologyVector.geometryOffsets && geometryVector.topologyVector.partOffsets
+            && geometryVector.topologyVector.ringOffsets) {
+            this.addMultiPolygonOutlinesWithSelectionVector(featureTable, selectionVector, canonical);
+            return;
+        }
+
+        if (geometryVector.topologyVector.partOffsets && geometryVector.topologyVector.ringOffsets) {
+            this.addPolygonOutlinesWithSelectionVector(featureTable, selectionVector, canonical);
+            return;
         }
     }
 
@@ -287,6 +323,7 @@ export class ColumnarFillBucket implements Bucket {
         }
     }
 
+<<<<<<< HEAD
     addPolygons(selectionVector: SelectionVector, gpuVector: IGpuVector, featureTable: FeatureTable, extent: number, canonical: CanonicalTileID, imagePositions: {
         [_: string]: ImagePosition;
     }) {
@@ -354,6 +391,8 @@ export class ColumnarFillBucket implements Bucket {
             this.programConfigurations.populatePaintArrays(this.layoutVertexArray.length, feature, featureOffset, paintOptions);
         }
     }
+=======
+>>>>>>> dea8843b0 (update)
 
     addGeometryPolygonsWithoutSelectionVector(geometryVector: IGeometryVector, extent: number, index: number, canonical: CanonicalTileID, imagePositions: {
         [_: string]: ImagePosition;
@@ -498,239 +537,7 @@ export class ColumnarFillBucket implements Bucket {
         return vertexBufferOffset;
     }
 
-    addPolygonsWithoutSelectionVector(gpuVector: IGpuVector, extent: number, index: number, canonical: CanonicalTileID, imagePositions: {
-        [_: string]: ImagePosition;
-    }) {
-        const triangleOffsets = gpuVector.triangleOffsets;
-        const indexBuffer = gpuVector.indexBuffer;
-        const vertexBuffer = gpuVector.vertexBuffer;
 
-        if (!triangleOffsets || triangleOffsets.length === 0 ||
-            !vertexBuffer || vertexBuffer.length === 0 ||
-            !indexBuffer || indexBuffer.length === 0) {
-            return;
-        }
-
-        const scaleFactor = EXTENT / extent;
-
-        let vertexBufferOffset = 0;
-        for (let featureOffset = 0; featureOffset < gpuVector.numGeometries; featureOffset++) {
-            const firstTriangleOffset = triangleOffsets[featureOffset];
-            const numTriangles = triangleOffsets[featureOffset + 1] - firstTriangleOffset;
-            const numIndices = numTriangles * 3;
-            const startIndexOffset = firstTriangleOffset * 3;
-            const endIndexOffset = startIndexOffset + numIndices;
-            if (startIndexOffset >= indexBuffer.length || endIndexOffset > indexBuffer.length) {
-                continue;
-            }
-            const featureIndexBuffer = indexBuffer.subarray(startIndexOffset, endIndexOffset);
-            if (!featureIndexBuffer || featureIndexBuffer.length === 0) {
-                continue;
-            }
-
-            //TODO: improve performance -> get rid of linear complexity
-            const numVertices = Math.max(...featureIndexBuffer) + 1;
-            const triangleSegment = this.segments.prepareSegment(numVertices, this.layoutVertexArray, this.indexArray);
-            for (let j = 0; j < featureIndexBuffer.length; j += 3) {
-                this.indexArray.emplaceBack(
-                    vertexBufferOffset + featureIndexBuffer[j],
-                    vertexBufferOffset + featureIndexBuffer[j + 2],
-                    vertexBufferOffset + featureIndexBuffer[j + 1]);
-            }
-
-            const startFeatureVertexBuffer = vertexBufferOffset * 2;
-            const endFeatureVertexBuffer = startFeatureVertexBuffer + numVertices * 2 - 1;
-            for (let j = startFeatureVertexBuffer; j <= endFeatureVertexBuffer; j += 2) {
-                this.layoutVertexArray.emplaceBack(
-                    vertexBuffer[j] * scaleFactor,
-                    vertexBuffer[j + 1] * scaleFactor
-                );
-            }
-
-            triangleSegment.vertexLength += numVertices;
-            triangleSegment.primitiveLength += numTriangles;
-            vertexBufferOffset = triangleSegment.vertexLength;
-        }
-        // Erstelle ein gültiges Feature-Objekt anstatt null
-        const feature : Feature = {
-            type: 'Polygon',
-            id: index,
-            properties: {},
-            geometry: []  // Hier ggf. mit tatsächlichen Ringen füllen
-        };
-
-        // Konvertiere imagePositions zu PaintOptions Format
-        const paintOptions = {
-            imagePositions,
-            canonical
-        };
-
-        this.programConfigurations.populatePaintArrays(this.layoutVertexArray.length, feature, index, paintOptions);
-    }
-
-    addPolygonsWithoutSelectionVectorFast(gpuVector: IGpuVector, extent: number, index: number, canonical: CanonicalTileID, imagePositions: {
-        [_: string]: ImagePosition;
-    }) {
-        const indexBuffer = gpuVector.indexBuffer;
-        const triangleOffsets = gpuVector.triangleOffsets;
-        const vertexBuffer = gpuVector.vertexBuffer;
-
-        if (!triangleOffsets || triangleOffsets.length === 0 ||
-            !vertexBuffer || vertexBuffer.length === 0 ||
-            !indexBuffer || indexBuffer.length === 0) {
-            return;
-        }
-
-        const scaleFactor = EXTENT / extent;
-        //const transformedIndexBuffer = new Uint32Array(indexBuffer.length);
-        const transformedIndexBuffer = new Uint16Array(indexBuffer.length);
-        const transformedVertexBuffer = new Int16Array(vertexBuffer.length);
-        //TODO: directly encode in the right representation
-        //TODO: fix -> each feature starts with index 0
-        for (let i = 0; i < indexBuffer.length; i++) {
-            transformedIndexBuffer[i] = indexBuffer[i];
-        }
-        for (let i = 0; i < vertexBuffer.length; i++) {
-            transformedVertexBuffer[i] = vertexBuffer[i] * scaleFactor;
-        }
-
-        /* let vertexBufferOffset = 0;
-         const triangleSegment = this.segments.prepareSegment(0, this.layoutVertexArray, this.indexArray);
-         for (let featureOffset = 0; featureOffset < gpuVector.numGeometries; featureOffset++) {
-             //Iterate over all triangles in the Polygon or MultiPolygon
-             const firstTriangleOffset = triangleOffsets[featureOffset];
-             const numTriangles = triangleOffsets[featureOffset + 1] - firstTriangleOffset;
-             const numIndices = numTriangles * 3;
-             const startIndexOffset = firstTriangleOffset * 3;
-             const endIndexOffset = startIndexOffset + numIndices;
-             const featureIndexBuffer = indexBuffer.subarray(startIndexOffset, endIndexOffset);
-
-             //TODO: improve performance -> get rid of linear complexity
-             const numVertices = Math.max(...featureIndexBuffer) + 1;
-             for (let j = 0; j < featureIndexBuffer.length; j += 3) {
-                 //TODO: resize based on number of vertices
-                 this.indexArray.emplaceBack(
-                     vertexBufferOffset + featureIndexBuffer[j],
-                     vertexBufferOffset + featureIndexBuffer[j + 1],
-                     vertexBufferOffset + featureIndexBuffer[j + 2]);
-             }
-             vertexBufferOffset += numVertices;
-         }
-         for (let i = 0; i < vertexBuffer.length; i+=2) {
-             this.layoutVertexArray.emplaceBack(vertexBuffer[i], vertexBuffer[i+1]);
-         }
-         triangleSegment.vertexLength += vertexBuffer.length / 2;
-         triangleSegment.primitiveLength += indexBuffer.length / 3;*/
-
-        /*const triangleSegment = this.segments.prepareSegment(vertexBuffer.length, this.layoutVertexArray,
-                    this.indexArray);
-        let lastFeatureMaxIndexOffset = 0;
-        let indexCounter = 0;
-        for(let i = 1; i < triangleOffsets.length; i++){
-            let numIndices = (triangleOffsets[i] - triangleOffsets[i-1]) * 3;
-            let maxIndexValue = 0;
-            for(let j = 0; j < numIndices; j+=3){
-                const index1 = indexBuffer[indexCounter++] + lastFeatureMaxIndexOffset;
-                const index2 = indexBuffer[indexCounter++] + lastFeatureMaxIndexOffset;
-                const index3 = indexBuffer[indexCounter++] + lastFeatureMaxIndexOffset;
-                this.indexArray.emplaceBack(index1, index2, index3);
-
-                maxIndexValue = Math.max(maxIndexValue, index1, index2, index3);
-            }
-
-            lastFeatureMaxIndexOffset += maxIndexValue + 1;
-        }
-        for (let i = 0; i < vertexBuffer.length; i+=2) {
-            this.layoutVertexArray.emplaceBack(vertexBuffer[i], vertexBuffer[i+1]);
-        }
-        triangleSegment.vertexLength += vertexBuffer.length / 2;
-        triangleSegment.primitiveLength += indexBuffer.length / 3;*/
-
-        this.indexArray.uint16 = transformedIndexBuffer as any;
-        this.indexArray.uint8 = new Uint8Array(transformedIndexBuffer.buffer);
-        this.indexArray.arrayBuffer = transformedIndexBuffer.buffer;
-        this.indexArray.length = transformedIndexBuffer.length;
-        this.indexArray.isTransferred = false;
-
-        this.layoutVertexArray.int16 = transformedVertexBuffer;
-        this.layoutVertexArray.uint8 = new Uint8Array(transformedVertexBuffer.buffer);
-        this.layoutVertexArray.arrayBuffer = transformedVertexBuffer.buffer;
-        this.layoutVertexArray.length = transformedVertexBuffer.length;
-        this.layoutVertexArray.isTransferred = false;
-
-        const segment = ({
-            vertexOffset: 0,
-            primitiveOffset: 0,
-            vertexLength: this.layoutVertexArray.length,
-            primitiveLength: this.indexArray.length,
-            sortKey: undefined,
-            //TODO: add proper implementation
-            //indexType: 1
-        } as any);
-        this.segments.segments.push(segment);
-
-        /*let vertexBufferOffset = 0;
-        let indexCounter = 0;
-        for (let featureOffset = 0; featureOffset < gpuVector.numGeometries; featureOffset++) {
-            //Iterate over all triangles in the Polygon or MultiPolygon
-            const firstTriangleOffset = triangleOffsets[featureOffset];
-            const numTriangles = triangleOffsets[featureOffset + 1] - firstTriangleOffset;
-            const numIndices = numTriangles * 3;
-            const startIndexOffset = firstTriangleOffset * 3;
-            const endIndexOffset = startIndexOffset + numIndices;
-            const featureIndexBuffer = indexBuffer.subarray(startIndexOffset, endIndexOffset);
-
-            //TODO: improve performance -> get rid of linear complexity
-            const numVertices = Math.max(...featureIndexBuffer) + 1;
-            for (let j = 0; j < featureIndexBuffer.length; j += 3) {
-                transformedIndexBuffer[indexCounter++] = vertexBufferOffset + featureIndexBuffer[j];
-                transformedIndexBuffer[indexCounter++] = vertexBufferOffset + featureIndexBuffer[j + 1];
-                transformedIndexBuffer[indexCounter++] = vertexBufferOffset + featureIndexBuffer[j + 2];
-            }
-            vertexBufferOffset += numVertices;
-        }
-        for (let i = 0; i < vertexBuffer.length; i++) {
-            transformedVertexBuffer[i] = vertexBuffer[i];
-        }
-        this.indexArray.uint16 = transformedIndexBuffer as any;
-        this.indexArray.uint8 = new Uint8Array(transformedIndexBuffer.buffer);
-        this.indexArray.arrayBuffer = transformedIndexBuffer.buffer;
-        this.indexArray.length = transformedIndexBuffer.length;
-        this.indexArray.isTransferred = false;
-
-        this.layoutVertexArray.int16 = transformedVertexBuffer;
-        this.layoutVertexArray.uint8 = new Uint8Array(transformedVertexBuffer.buffer);
-        this.layoutVertexArray.arrayBuffer = transformedVertexBuffer.buffer;
-        this.layoutVertexArray.length = transformedVertexBuffer.length;
-        this.layoutVertexArray.isTransferred = false;
-        const segment = ({
-            vertexOffset: 0,
-            primitiveOffset: 0,
-            vertexLength: this.layoutVertexArray.length,
-            primitiveLength: this.indexArray.length,
-            sortKey: undefined,
-            //TODO: add proper implementation
-            //indexType: 1
-        } as any);
-        this.segments.segments.push(segment);
-*/
-
-        // Erstelle ein gültiges Feature-Objekt anstatt null
-        const feature : Feature = {
-            type: 'Polygon',
-            id: index,
-            properties: {},
-            geometry: []  // Hier ggf. mit tatsächlichen Ringen füllen
-        };
-
-        // Konvertiere imagePositions zu PaintOptions Format
-        const paintOptions = {
-            imagePositions,
-            canonical
-        };
-
-        this.programConfigurations.populatePaintArrays(this.layoutVertexArray.length, feature, index, paintOptions);
-    }
 
     addPolygonOutlinesWithoutSelectionVector(featureTable: FeatureTable, numGeometries: number,
         canonical: CanonicalTileID) {
@@ -840,63 +647,6 @@ export class ColumnarFillBucket implements Bucket {
         }
     }
 
-    addMultiPolygonOutlinesWithoutSelectionVectorFast(featureTable: FeatureTable, numGeometries,
-        canonical: CanonicalTileID) {
-
-        const topologyVector = featureTable.geometryVector.topologyVector;
-        const ringOffsets = topologyVector.ringOffsets;
-        const numTotalRings = ringOffsets.length;
-        //const indexBuffer = new Uint32Array(ringOffsets[ringOffsets.length - 1] +
-        //    topologyVector.partOffsets.length);
-        const indexBuffer = new Uint16Array(ringOffsets[ringOffsets.length - 1] +
-            topologyVector.partOffsets.length);
-        let indexBufferCounter = 0;
-        let index = 0;
-        for (let i = 1; i < numTotalRings; i++) {
-            const ringOffsetStart = ringOffsets[i -1];
-            const ringOffsetEnd = ringOffsets[i];
-            const numVertices = ringOffsetEnd - ringOffsetStart;
-
-            indexBuffer[indexBufferCounter++] = index + numVertices - 1;
-            indexBuffer[indexBufferCounter++] = index;
-            for (let j = 1; j < numVertices; j++) {
-                indexBuffer[indexBufferCounter++] = index++;
-                indexBuffer[indexBufferCounter++] = index;
-            }
-            index++;
-        }
-
-        this.indexArray.uint16 = indexBuffer as any;
-        this.indexArray.uint8 = new Uint8Array(indexBuffer.buffer);
-        this.indexArray.arrayBuffer = indexBuffer.buffer;
-        this.indexArray.length = indexBuffer.length;
-        this.indexArray.isTransferred = false;
-
-        const segment = ({
-            vertexOffset: 0,
-            primitiveOffset: 0,
-            vertexLength: this.layoutVertexArray.length,
-            primitiveLength: this.indexArray2.length,
-            //indexType: 1
-        } as any);
-        this.segments2.segments.push(segment);
-
-        // Erstelle ein gültiges Feature-Objekt anstatt null
-        const feature : Feature = {
-            type: 'Polygon',
-            id: index,
-            properties: {},
-            geometry: []  // Hier ggf. mit tatsächlichen Ringen füllen
-        };
-
-        // Konvertiere imagePositions zu PaintOptions Format
-        const paintOptions = {
-            imagePositions: null,
-            canonical
-        };
-
-        this.programConfigurations.populatePaintArrays(this.layoutVertexArray.length, feature, index, paintOptions);
-    }
 
     addPolygonOutlinesWithSelectionVector(featureTable: FeatureTable, selectionVector: SelectionVector,
         canonical: CanonicalTileID) {
@@ -1006,67 +756,6 @@ export class ColumnarFillBucket implements Bucket {
         }
     }
 
-    /*addPolygonsWithoutSelectionVectorAndSegments(gpuVector: GpuVector, extent: number, index: number, canonical: CanonicalTileID, imagePositions: {
-        [_: string]: ImagePosition;
-    }) {
-        const triangleOffsets = gpuVector.triangleOffsets;
-        const indexBuffer = gpuVector.indexBuffer;
-        const vertexBuffer = gpuVector.vertexBuffer;
-
-        let vertexBufferOffset = 0;
-        for(let featureOffset = 0; featureOffset < gpuVector.numGeometries; featureOffset++){
-            //Iterate over all triangles in the Polygon or MultiPolygon
-            const firstTriangleOffset = triangleOffsets[featureOffset];
-            const numTriangles = triangleOffsets[featureOffset + 1] - firstTriangleOffset;
-            const numIndices = numTriangles * 3;
-            const startIndexOffset = firstTriangleOffset * 3;
-            const endIndexOffset = startIndexOffset + numIndices;
-            const featureIndexBuffer = indexBuffer.subarray(startIndexOffset, endIndexOffset);
-
-            //TODO: improve performance -> get rid of linear complexity
-            const numVertices = Math.max(...featureIndexBuffer) + 1;
-            const triangleSegment = this.segments.prepareSegment(numVertices, this.layoutVertexArray, this.indexArray);
-            //TODO: also hand over layoutVertexArray again?
-            const lineSegment = this.segments2.prepareSegment(numVertices, this.layoutVertexArray, this.indexArray2);
-
-            for(let j = 0; j < featureIndexBuffer.length; j+=3){
-                //TODO: resize based on number of vertices
-                this.indexArray.emplaceBack(
-                    vertexBufferOffset + featureIndexBuffer[j],
-                    vertexBufferOffset + featureIndexBuffer[j+1],
-                    vertexBufferOffset + featureIndexBuffer[j+2]);
-            }
-
-            const lineIndex = lineSegment.vertexLength;
-            const startFeatureVertexBuffer = vertexBufferOffset * 2;
-            const endFeatureVertexBuffer = startFeatureVertexBuffer + numVertices * 2 - 1;
-            for(let j = startFeatureVertexBuffer; j <= endFeatureVertexBuffer; j+=2){
-                this.layoutVertexArray.emplaceBack(vertexBuffer[j], vertexBuffer[j+1]);
-                //TODO also add closing point -> how to identify an LinearRing?
-                //TODO: get rid of that branch
-                if(j > startFeatureVertexBuffer){
-                    let index = lineIndex + (j / 2);
-                    this.indexArray2.emplaceBack(index - 1, index);
-                }
-                else{
-                    //TODO: get rid only test
-                    let index = lineIndex + (j / 2);
-                    this.indexArray2.emplaceBack(index, index);
-                }
-            }
-
-            triangleSegment.vertexLength += numVertices;
-            triangleSegment.primitiveLength += numTriangles;
-
-            lineSegment.vertexLength += numVertices;
-            lineSegment.primitiveLength += numVertices;
-
-            vertexBufferOffset = triangleSegment.vertexLength;
-        }
-
-        const feature = null;
-        this.programConfigurations.populatePaintArrays(this.layoutVertexArray.length, feature, index, imagePositions, canonical);
-    }*/
 }
 
 register('ColumnarFillBucket', ColumnarFillBucket, {omit: ['layers', 'patternFeatures']});

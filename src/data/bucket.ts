@@ -89,10 +89,8 @@ export interface Bucket {
     readonly layers: Array<any>;
     readonly stateDependentLayers: Array<any>;
     readonly stateDependentLayerIds: Array<string>;
-    populate?(features: Array<IndexedFeature>, options: PopulateParameters, canonical: CanonicalTileID): void;
-    populateColumnar?(table: FeatureTable, options: PopulateParameters, canonical: CanonicalTileID): void;
-    update?(states: FeatureStates, vtLayer: VectorTileLayerLike, imagePositions: {[_: string]: ImagePosition}, dashPositions: Record<string, DashEntry>): void;
-    updateColumnar?(states: FeatureStates, vtLayer: VectorTileLayerLike, imagePositions: {[_: string]: ImagePosition}): void;
+    populate<TST>(features: TST, options: PopulateParameters, canonical: CanonicalTileID): void;
+    update<TST>(states: FeatureStates, layerData: TST, imagePositions: {[_: string]: ImagePosition}, dashPositions: Record<string, DashEntry>): void;
     isEmpty(): boolean;
     upload(context: Context): void;
     uploadPending(): boolean;
