@@ -1,5 +1,6 @@
 import {type QueryIntersectsFeatureParams, StyleLayer} from '../style_layer';
 import {LineBucket} from '../../data/bucket/line_bucket';
+import {ColumnarLineBucket} from '../../data/bucket/columnar/columnar_line_bucket';
 import {polygonIntersectsBufferedMultiLine} from '../../util/intersection_tests';
 import {getMaximumPaintValue, translateDistance, translate, offsetLine} from '../query_utils';
 import properties, {type LineLayoutPropsPossiblyEvaluated, type LinePaintPropsPossiblyEvaluated} from './line_style_layer_properties.g';
@@ -79,6 +80,9 @@ export class LineStyleLayer extends StyleLayer {
     }
 
     createBucket(parameters: BucketParameters<any>) {
+        if (parameters.encoding === 'mlt') {
+            return new ColumnarLineBucket(parameters);
+        }
         return new LineBucket(parameters);
     }
 

@@ -36,6 +36,7 @@ export class WorkerTile {
     showCollisionBoxes: boolean;
     collectResourceTiming: boolean;
     returnDependencies: boolean;
+    encoding?: 'mvt' | 'mlt';
 
     status: 'parsing' | 'done';
     data: VectorTileLike;
@@ -57,6 +58,7 @@ export class WorkerTile {
         this.collectResourceTiming = !!params.collectResourceTiming;
         this.returnDependencies = !!params.returnDependencies;
         this.promoteId = params.promoteId;
+        this.encoding = params.encoding as ('mvt' | 'mlt') | undefined;
         this.inFlightDependencies = [];
     }
 
@@ -119,10 +121,17 @@ export class WorkerTile {
                     overscaling: this.overscaling,
                     collisionBoxArray: this.collisionBoxArray,
                     sourceLayerIndex,
-                    sourceID: this.source
+                    sourceID: this.source,
+                    encoding: this.encoding
                 });
 
-                bucket.populate(features, options, this.tileID.canonical);
+                // For MLT tiles, pass the FeatureTable directly to columnar buckets
+                // For MVT tiles, pass the features array as before
+                if (this.encoding === 'mlt' && 'featureTable' in sourceLayer) {
+                    bucket.populate((sourceLayer as any).featureTable, options, this.tileID.canonical);
+                } else {
+                    bucket.populate(features, options, this.tileID.canonical);
+                }
                 featureIndex.bucketLayerIDs.push(family.map((l) => l.id));
             }
         }

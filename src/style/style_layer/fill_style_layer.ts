@@ -1,5 +1,6 @@
 import {type QueryIntersectsFeatureParams, StyleLayer} from '../style_layer';
 import {FillBucket} from '../../data/bucket/fill_bucket';
+import {ColumnarFillBucket} from '../../data/bucket/columnar/columnar_fill_bucket';
 import {polygonIntersectsMultiPolygon} from '../../util/intersection_tests';
 import {translateDistance, translate} from '../query_utils';
 import properties, {type FillLayoutPropsPossiblyEvaluated, type FillPaintPropsPossiblyEvaluated} from './fill_style_layer_properties.g';
@@ -34,6 +35,9 @@ export class FillStyleLayer extends StyleLayer {
     }
 
     createBucket(parameters: BucketParameters<any>) {
+        if (parameters.encoding === 'mlt') {
+            return new ColumnarFillBucket(parameters);
+        }
         return new FillBucket(parameters);
     }
 
