@@ -31,6 +31,7 @@ import {subdividePolygon} from '../../render/subdivision';
 import type {SubdivisionGranularitySetting} from '../../render/subdivision_granularity_settings';
 import {fillLargeMeshArrays} from '../../render/fill_large_mesh_arrays';
 import type {VectorTileLayerLike} from '@maplibre/vt-pbf';
+import type {DashEntry} from '../../render/line_atlas';
 
 export class FillBucket implements Bucket {
     index: number;
@@ -75,13 +76,16 @@ export class FillBucket implements Bucket {
         this.stateDependentLayerIds = this.layers.filter((l) => l.isStateDependent()).map((l) => l.id);
     }
 
-    populate(features: Array<IndexedFeature>, options: PopulateParameters, canonical: CanonicalTileID) {
+    populate<T>(data: T, options: PopulateParameters, canonical: CanonicalTileID): void {
+        const features = data as Array<IndexedFeature>;
+        console.log('[FillBucket] populate called with', features.length, 'features');
         this.hasDependencies = hasPattern('fill', this.layers, options);
         const fillSortKey = this.layers[0].layout.get('fill-sort-key');
         const sortFeaturesByKey = !fillSortKey.isConstant();
         const bucketFeatures: BucketFeature[] = [];
 
         for (const {feature, id, index, sourceLayerIndex} of features) {
+            console.log('[FillBucket] Processing feature - id:', id, 'index:', index, 'properties:', feature.properties);
             const needGeometry = this.layers[0]._featureFilter.needGeometry;
             const evaluationFeature = toEvaluationFeature(feature, needGeometry);
 
@@ -126,9 +130,10 @@ export class FillBucket implements Bucket {
         }
     }
 
-    update(states: FeatureStates, vtLayer: VectorTileLayerLike, imagePositions: {
+    update<T>(states: FeatureStates, layerData: T, imagePositions: {
         [_: string]: ImagePosition;
-    }) {
+    }, dashPositions?: Record<string, DashEntry>): void {
+        const vtLayer = layerData as VectorTileLayerLike;
         if (!this.stateDependentLayers.length) return;
         this.programConfigurations.updatePaintArrays(states, vtLayer, this.stateDependentLayers, {
             imagePositions

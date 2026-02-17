@@ -2,6 +2,9 @@ import Point from '@mapbox/point-geometry';
 import {type FeatureTable, decodeTile, type Feature as MLTFeature, GEOMETRY_TYPE} from '@maplibre/mlt';
 import type {VectorTileFeatureLike, VectorTileLayerLike, VectorTileLike} from '@maplibre/vt-pbf';
 
+// TODO(mlt-pipeline): Remove MLTVectorTileFeature once MLT has its own worker pipeline separate from MVT.
+// Bridges MLT features into the VectorTileFeatureLike interface so the shared MVT pipeline can process
+// layer types (symbol, circle, fill-extrusion, ...) that do not yet have a dedicated MLT bucket implementation.
 class MLTVectorTileFeature implements VectorTileFeatureLike {
     _featureData: MLTFeature;
     properties: {[_: string]: any};
@@ -51,19 +54,24 @@ class MLTVectorTileLayer implements VectorTileLayerLike {
     length: number;
     version: number;
     extent: number;
-    features: MLTFeature[] = [];
-    
+    // TODO(mlt-full-support): Remove _features and feature() once all layer types have columnar bucket implementations.
+    // Lazy materialization is only needed for non-columnar buckets that call feature(i).
+    private _features: MLTFeature[] | null = null;
+
     constructor(featureTable: FeatureTable) {
         this.featureTable = featureTable;
         this.name = featureTable.name;
         this.extent = featureTable.extent;
         this.version = 2;
-        this.features = featureTable.getFeatures();
-        this.length = this.features.length;
+        this.length = featureTable.numFeatures;
     }
 
+    // TODO(mlt-full-support): Remove once all layer types have columnar bucket implementations.
     feature(i: number): VectorTileFeatureLike {
-        return new MLTVectorTileFeature(this.features[i], this.extent);
+        if (!this._features) {
+            this._features = this.featureTable.getFeatures();
+        }
+        return new MLTVectorTileFeature(this._features[i], this.extent);
     }
 }
 

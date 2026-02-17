@@ -87,6 +87,10 @@ const MIN = -MAX - 1;
  * Line bucket class
  */
 export class ColumnarLineBucket implements Bucket {
+    // TODO(mlt-pipeline): Remove isColumnar once MLT has its own worker pipeline separate from MVT.
+    // Used by worker_tile to route FeatureTable to columnar buckets while the two pipelines are shared.
+    readonly isColumnar = true;
+
     distance: number;
     totalDistance: number;
     maxLineLength: number;
@@ -149,17 +153,11 @@ export class ColumnarLineBucket implements Bucket {
     }
 
     populate<T>(data: T, options: PopulateParameters, canonical: CanonicalTileID): void {
-        // ColumnarLineBucket only supports FeatureTable
-        this.populateColumnar(data as FeatureTable, options, canonical);
+        this.populateLine(data as FeatureTable, options, canonical);
     }
 
     update<T>(states: FeatureStates, layerData: T, imagePositions: {[_: string]: ImagePosition}): void {
-        // ColumnarLineBucket only supports FeatureTable/VectorTileLayer
         this.updateColumnar(states, layerData as VectorTileLayer, imagePositions);
-    }
-
-    populateColumnar(featureTable: FeatureTable, options: PopulateParameters, canonical: CanonicalTileID) {
-        this.populateLine(featureTable, options, canonical);
     }
 
     populateLine(featureTable: FeatureTable, options: PopulateParameters, canonical: CanonicalTileID) {

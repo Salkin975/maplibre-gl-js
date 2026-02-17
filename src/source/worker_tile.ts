@@ -97,12 +97,15 @@ export class WorkerTile {
             }
 
             const sourceLayerIndex = sourceLayerCoder.encode(sourceLayerId);
+            // TODO(mlt-pipeline): Remove features array once MLT has its own worker pipeline separate from MVT.
+            // The shared MVT pipeline is used as a fallback for layer types that do not yet have a dedicated MLT bucket.
             const features = [];
             for (let index = 0; index < sourceLayer.length; index++) {
                 const feature = sourceLayer.feature(index);
                 const id = featureIndex.getId(feature, sourceLayerId);
                 features.push({feature, id, index, sourceLayerIndex});
             }
+            const featureTable = this.encoding === 'mlt' ? (sourceLayer as any).featureTable : undefined;
 
             for (const family of layerFamilies[sourceLayerId]) {
                 const layer = family[0];
@@ -125,13 +128,10 @@ export class WorkerTile {
                     encoding: this.encoding
                 });
 
-                // For MLT tiles, pass the FeatureTable directly to columnar buckets
-                // For MVT tiles, pass the features array as before
-                if (this.encoding === 'mlt' && 'featureTable' in sourceLayer) {
-                    bucket.populate((sourceLayer as any).featureTable, options, this.tileID.canonical);
-                } else {
-                    bucket.populate(features, options, this.tileID.canonical);
-                }
+                // TODO(mlt-pipeline): Remove isColumnar check once MLT has its own worker pipeline.
+                // In the dedicated MLT pipeline, featureTable is always passed directly without this fallback.
+                const populateData = featureTable && (bucket as any).isColumnar ? featureTable : features;
+                bucket.populate(populateData, options, this.tileID.canonical);
                 featureIndex.bucketLayerIDs.push(family.map((l) => l.id));
             }
         }

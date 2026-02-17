@@ -34,6 +34,7 @@ import {subdividePolygon, subdivideVertexLine} from '../../render/subdivision';
 import type {SubdivisionGranularitySetting} from '../../render/subdivision_granularity_settings';
 import {fillLargeMeshArrays} from '../../render/fill_large_mesh_arrays';
 import type {VectorTileLayerLike} from '@maplibre/vt-pbf';
+import type {DashEntry} from '../../render/line_atlas';
 
 const FACTOR = Math.pow(2, 13);
 
@@ -97,7 +98,8 @@ export class FillExtrusionBucket implements Bucket {
         this.stateDependentLayerIds = this.layers.filter((l) => l.isStateDependent()).map((l) => l.id);
     }
 
-    populate(features: Array<IndexedFeature>, options: PopulateParameters, canonical: CanonicalTileID) {
+    populate<T>(data: T, options: PopulateParameters, canonical: CanonicalTileID): void {
+        const features = data as Array<IndexedFeature>;
         this.features = [];
         this.hasDependencies = hasPattern('fill-extrusion', this.layers, options);
 
@@ -134,7 +136,8 @@ export class FillExtrusionBucket implements Bucket {
         }
     }
 
-    update(states: FeatureStates, vtLayer: VectorTileLayerLike, imagePositions: {[_: string]: ImagePosition}) {
+    update<T>(states: FeatureStates, layerData: T, imagePositions: {[_: string]: ImagePosition}, dashPositions?: Record<string, DashEntry>): void {
+        const vtLayer = layerData as VectorTileLayerLike;
         if (!this.stateDependentLayers.length) return;
         this.programConfigurations.updatePaintArrays(states, vtLayer, this.stateDependentLayers, {
             imagePositions

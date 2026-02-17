@@ -28,6 +28,10 @@ import {type DashEntry} from '../../../render/line_atlas';
 import {type CanonicalTileID} from '../../../tile/tile_id';
 
 export class ColumnarFillBucket implements Bucket {
+    // TODO(mlt-pipeline): Remove isColumnar once MLT has its own worker pipeline separate from MVT.
+    // Used by worker_tile to route FeatureTable to columnar buckets while the two pipelines are shared.
+    readonly isColumnar = true;
+
     index: number;
     zoom: number;
     overscaling: number;
@@ -71,12 +75,10 @@ export class ColumnarFillBucket implements Bucket {
     }
 
     populate<T>(data: T, options: PopulateParameters, canonical: CanonicalTileID): void {
-        // ColumnarFillBucket only supports FeatureTable
-        this.populateColumnar(data as FeatureTable, options, canonical);
+        this.populatePolygon(data as FeatureTable, options, canonical);
     }
 
     update<T>(states: FeatureStates, layerData: T, imagePositions: Record<string, ImagePosition>, dashPositions?: Record<string, DashEntry>): void {
-        // ColumnarFillBucket only supports FeatureTable
         this.updateColumnar(states, layerData as VectorTileLayer, imagePositions);
     }
 
@@ -99,11 +101,6 @@ export class ColumnarFillBucket implements Bucket {
             properties,
             geometry: []
         } as Feature;
-    }
-
-    populateColumnar(featureTable: FeatureTable, options: PopulateParameters, canonical: CanonicalTileID) {
-        this.populatePolygon(featureTable, options, canonical);
-
     }
 
     populatePolygon(featureTable: FeatureTable, options: PopulateParameters, canonical: CanonicalTileID) {
