@@ -708,7 +708,8 @@ export class ProgramConfigurationSet<Layer extends TypedStyleLayer> {
     constructor(layers: ReadonlyArray<Layer>, zoom: number, filterProperties: (_: string) => boolean = () => true) {
         this.programConfigurations = {};
         for (const layer of layers) {
-            this.programConfigurations[layer.id] = new ProgramConfiguration(layer, zoom, filterProperties);
+            const config = new ProgramConfiguration(layer, zoom, filterProperties);
+            this.programConfigurations[layer.id] = config;
         }
         this.needsUpload = false;
         this._featureMap = new FeaturePositionMap();
