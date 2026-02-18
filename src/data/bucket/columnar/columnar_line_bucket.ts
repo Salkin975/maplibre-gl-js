@@ -26,7 +26,7 @@ import type {VertexBuffer} from '../../../gl/vertex_buffer';
 import type {FeatureStates} from '../../../source/source_state';
 import type {ImagePosition} from '../../../render/image_atlas';
 import type {VectorTileLayer} from '@mapbox/vector-tile';
-import {type FeatureTable, filter, type IGeometryVector, type SelectionVector} from '@maplibre/mlt';
+import {createSelectionVector, type FeatureTable, filter, type IGeometryVector, type SelectionVector} from '@maplibre/mlt';
 import type Point from '@mapbox/point-geometry';
 import VectorUtils from './vectorUtils';
 import {type CanonicalTileID} from '../../../tile/tile_id';
@@ -160,15 +160,37 @@ export class ColumnarLineBucket implements Bucket {
         this.updateColumnar(states, layerData as VectorTileLayer, imagePositions);
     }
 
+    private buildPaintFeature(featureTable: FeatureTable, featureIndex: number): {type: string; id: number; properties: Record<string, unknown>} {
+        const id = featureTable.idVector ? Number(featureTable.idVector.getValue(featureIndex)) : featureIndex;
+        const properties: Record<string, unknown> = {};
+        const propertyVectors = featureTable.propertyVectors;
+        if (propertyVectors) {
+            for (const propertyColumn of propertyVectors) {
+                if (!propertyColumn) continue;
+                const value = propertyColumn.getValue(featureIndex);
+                if (value !== null) {
+                    properties[propertyColumn.name] = typeof value === 'bigint' ? Number(value) : value;
+                }
+            }
+        }
+        return {type: 'LineString', id, properties};
+    }
+
+    private paintIsDataDriven(): boolean {
+        return Object.values(this.programConfigurations.programConfigurations)
+            .some(cfg => Object.values(cfg.binders).some(b => 'populatePaintArray' in b));
+    }
+
     populateLine(featureTable: FeatureTable, options: PopulateParameters, canonical: CanonicalTileID) {
         this.hasDependencies = hasPattern('line', this.layers, options);
 
         const filterSpecification = this.layers[0].filter as any;
+        let selectionVector: SelectionVector;
         if (!filterSpecification) {
-            //TODO: handle line layers without filter
-            return;
+            selectionVector = createSelectionVector(featureTable.numFeatures);
+        } else {
+            selectionVector = filter(featureTable, filterSpecification);
         }
-        const selectionVector = filter(featureTable, filterSpecification);
 
         if(selectionVector.limit === 0){
             return;
@@ -185,27 +207,24 @@ export class ColumnarLineBucket implements Bucket {
         const topologyVector = geometryVector.topologyVector;
 
         const layout = this.layers[0].layout;
-        //TODO: fix -> add support for data driven styling based on feature
-        if(!layout.get('line-join').isConstant()){
-            throw new Error('Only constant values for line-join are currently supported.');
-        }
-        const feature = null;
-        const join = layout.get('line-join').evaluate(feature, {});
+        const lineJoin = layout.get('line-join');
         const cap = layout.get('line-cap');
         const miterLimit = layout.get('line-miter-limit');
         const roundLimit = layout.get('line-round-limit');
 
+        const paintDataDriven = this.paintIsDataDriven();
+
         if(geometryVector.containsSingleGeometryType() && topologyVector.partOffsets && !topologyVector.geometryOffsets){
-            this.addLineStrings(featureTable, selectionVector, join, cap, miterLimit, roundLimit, canonical);
+            this.addLineStrings(featureTable, selectionVector, lineJoin, cap, miterLimit, roundLimit, canonical, paintDataDriven);
         }
         else if(topologyVector.geometryOffsets && topologyVector.partOffsets && !topologyVector.ringOffsets){
-            this.addMultiLineStrings(featureTable, selectionVector, join, cap, miterLimit, roundLimit, canonical);
+            this.addMultiLineStrings(featureTable, selectionVector, lineJoin, cap, miterLimit, roundLimit, canonical, paintDataDriven);
         }
         else if(!topologyVector.geometryOffsets && topologyVector.partOffsets && topologyVector.ringOffsets){
-            this.addPolygon(featureTable, selectionVector, join, cap, miterLimit, roundLimit, canonical);
+            this.addPolygon(featureTable, selectionVector, lineJoin, cap, miterLimit, roundLimit, canonical, paintDataDriven);
         }
         else if(topologyVector.geometryOffsets && topologyVector.partOffsets && topologyVector.ringOffsets){
-            this.addMultiPolygon(featureTable, selectionVector, join, cap, miterLimit, roundLimit, canonical);
+            this.addMultiPolygon(featureTable, selectionVector, lineJoin, cap, miterLimit, roundLimit, canonical, paintDataDriven);
         }
         else{
             throw new Error('Point, MultiPoint or geometry type not supported for a LineLayer.');
@@ -331,40 +350,56 @@ export class ColumnarLineBucket implements Bucket {
         this.segments.destroy();
     }
 
-    addLineStrings(featureTable: FeatureTable, selectionVector: SelectionVector, join: string, cap: any,
-        miterLimit: any, roundLimit: any, canonical: CanonicalTileID){
+    addLineStrings(featureTable: FeatureTable, selectionVector: SelectionVector, lineJoin: any, cap: any,
+        miterLimit: any, roundLimit: any, canonical: CanonicalTileID, paintDataDriven: boolean){
         const geometryVector = featureTable.geometryVector as IGeometryVector;
         const partOffsets = geometryVector.topologyVector.partOffsets;
         const tileExtent = featureTable.extent;
 
+        const joinIsDataDriven = !lineJoin.isConstant();
+        const needsFeature = joinIsDataDriven || paintDataDriven;
+        const constantJoin = !joinIsDataDriven ? lineJoin.evaluate({} as any, {}) : null;
+
         for(let i = 0; i < selectionVector.limit; i++){
             const index = selectionVector.getIndex(i);
+            const feature = needsFeature
+                ? this.buildPaintFeature(featureTable, index)
+                : {type: 'LineString', id: featureTable.idVector ? Number(featureTable.idVector.getValue(index)) : index, properties: {}};
+            const join = joinIsDataDriven ? lineJoin.evaluate(feature as any, {}) : constantJoin;
+
             const startOffset = partOffsets[index];
             const endOffset = partOffsets[index+1];
 
             this.addLine(geometryVector, startOffset,
                 endOffset, false, join, cap, miterLimit, roundLimit, tileExtent);
 
-            const id = featureTable.idVector ? Number(featureTable.idVector.getValue(i)) : i;
-            const feature = {id} as any;
             const paintOptions = {
                 imagePositions: null,
                 canonical
             };
 
-            this.programConfigurations.populatePaintArrays(this.layoutVertexArray.length, feature, index, paintOptions);
+            this.programConfigurations.populatePaintArrays(this.layoutVertexArray.length, feature as any, index, paintOptions);
         }
     }
 
-    addMultiLineStrings(featureTable: FeatureTable, selectionVector: SelectionVector, join: string, cap: any,
-        miterLimit: any, roundLimit: any, canonical: CanonicalTileID){
+    addMultiLineStrings(featureTable: FeatureTable, selectionVector: SelectionVector, lineJoin: any, cap: any,
+        miterLimit: any, roundLimit: any, canonical: CanonicalTileID, paintDataDriven: boolean){
         const geometryVector = featureTable.geometryVector as IGeometryVector;
         const geometryOffsets = geometryVector.topologyVector.geometryOffsets;
         const partOffsets = geometryVector.topologyVector.partOffsets;
         const tileExtent = featureTable.extent;
 
+        const joinIsDataDriven = !lineJoin.isConstant();
+        const needsFeature = joinIsDataDriven || paintDataDriven;
+        const constantJoin = !joinIsDataDriven ? lineJoin.evaluate({} as any, {}) : null;
+
         for(let i = 0; i < selectionVector.limit; i++){
             const index = selectionVector.getIndex(i);
+            const feature = needsFeature
+                ? this.buildPaintFeature(featureTable, index)
+                : {type: 'LineString', id: featureTable.idVector ? Number(featureTable.idVector.getValue(index)) : index, properties: {}};
+            const join = joinIsDataDriven ? lineJoin.evaluate(feature as any, {}) : constantJoin;
+
             const numLineStrings = geometryOffsets[index+1] - geometryOffsets[index];
             let partOffset = geometryOffsets[index];
 
@@ -376,28 +411,34 @@ export class ColumnarLineBucket implements Bucket {
                 partOffset++;
             }
 
-            const id = featureTable.idVector ? Number(featureTable.idVector.getValue(i)) : i;
-            const feature = {id} as any;
             const paintOptions = {
                 imagePositions: null,
                 canonical
             };
 
-            this.programConfigurations.populatePaintArrays(this.layoutVertexArray.length, feature, index, paintOptions);
+            this.programConfigurations.populatePaintArrays(this.layoutVertexArray.length, feature as any, index, paintOptions);
         }
     }
 
-    addPolygon(featureTable: FeatureTable, selectionVector: SelectionVector, join: string, cap: any,
-        miterLimit: any, roundLimit: any, canonical: CanonicalTileID){
+    addPolygon(featureTable: FeatureTable, selectionVector: SelectionVector, lineJoin: any, cap: any,
+        miterLimit: any, roundLimit: any, canonical: CanonicalTileID, paintDataDriven: boolean){
         const geometryVector = featureTable.geometryVector as IGeometryVector;
         const ringOffsets = geometryVector.topologyVector.ringOffsets;
         const partOffsets = geometryVector.topologyVector.partOffsets;
         const tileExtent = featureTable.extent;
 
+        const joinIsDataDriven = !lineJoin.isConstant();
+        const needsFeature = joinIsDataDriven || paintDataDriven;
+        const constantJoin = !joinIsDataDriven ? lineJoin.evaluate({} as any, {}) : null;
+
         for(let i = 0; i < selectionVector.limit; i++){
             const index = selectionVector.getIndex(i);
-            const geometryType = geometryVector.geometryType(index);
+            const feature = needsFeature
+                ? this.buildPaintFeature(featureTable, index)
+                : {type: 'LineString', id: featureTable.idVector ? Number(featureTable.idVector.getValue(index)) : index, properties: {}};
+            const join = joinIsDataDriven ? lineJoin.evaluate(feature as any, {}) : constantJoin;
 
+            const geometryType = geometryVector.geometryType(index);
             const ringOffsetStart = partOffsets[index];
             const numRings = partOffsets[index+1] - ringOffsetStart;
 
@@ -409,27 +450,34 @@ export class ColumnarLineBucket implements Bucket {
                     join, cap, miterLimit, roundLimit, tileExtent);
             }
 
-            const id = featureTable.idVector ? Number(featureTable.idVector.getValue(i)) : i;
-            const feature = {id} as any;
             const paintOptions = {
                 imagePositions: null,
                 canonical
             };
 
-            this.programConfigurations.populatePaintArrays(this.layoutVertexArray.length, feature, index, paintOptions);
+            this.programConfigurations.populatePaintArrays(this.layoutVertexArray.length, feature as any, index, paintOptions);
         }
     }
 
-    addMultiPolygon(featureTable: FeatureTable, selectionVector: SelectionVector, join: string, cap: any,
-        miterLimit: any, roundLimit: any, canonical: CanonicalTileID){
+    addMultiPolygon(featureTable: FeatureTable, selectionVector: SelectionVector, lineJoin: any, cap: any,
+        miterLimit: any, roundLimit: any, canonical: CanonicalTileID, paintDataDriven: boolean){
         const geometryVector = featureTable.geometryVector as IGeometryVector;
         const geometryOffsets = geometryVector.topologyVector.geometryOffsets;
         const ringOffsets = geometryVector.topologyVector.ringOffsets;
         const partOffsets = geometryVector.topologyVector.partOffsets;
         const tileExtent = featureTable.extent;
 
+        const joinIsDataDriven = !lineJoin.isConstant();
+        const needsFeature = joinIsDataDriven || paintDataDriven;
+        const constantJoin = !joinIsDataDriven ? lineJoin.evaluate({} as any, {}) : null;
+
         for(let i = 0; i < selectionVector.limit; i++){
             const index = selectionVector.getIndex(i);
+            const feature = needsFeature
+                ? this.buildPaintFeature(featureTable, index)
+                : {type: 'LineString', id: featureTable.idVector ? Number(featureTable.idVector.getValue(index)) : index, properties: {}};
+            const join = joinIsDataDriven ? lineJoin.evaluate(feature as any, {}) : constantJoin;
+
             const geometryType = geometryVector.geometryType(index);
             const partOffsetStart = geometryOffsets[index];
             const numPolygons = geometryOffsets[index+1] - partOffsetStart;
@@ -448,22 +496,17 @@ export class ColumnarLineBucket implements Bucket {
                 }
             }
 
-            const id = featureTable.idVector ? Number(featureTable.idVector.getValue(i)) : i;
-            const feature = {id} as any;
             const paintOptions = {
                 imagePositions: null,
                 canonical
             };
 
-            this.programConfigurations.populatePaintArrays(this.layoutVertexArray.length, feature, index, paintOptions);
+            this.programConfigurations.populatePaintArrays(this.layoutVertexArray.length, feature as any, index, paintOptions);
         }
     }
 
     addLine(geometryVector: IGeometryVector, startOffset: number, endOffset: number, isPolygon: boolean,
         join: string, cap: any, miterLimit: any, roundLimit: any, tileExtent: number) {
-
-        const vertexCountBefore = this.layoutVertexArray.length;
-        const indexCountBefore = this.indexArray.length;
 
         this.distance = 0;
         this.scaledDistance = 0;
