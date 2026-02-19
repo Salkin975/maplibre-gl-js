@@ -1,33 +1,37 @@
-import {FillLayoutArray, LineIndexArray, TriangleIndexArray} from '../../array_types.g';
+import {FillLayoutArray} from '../../array_types.g';
 import {EXTENT} from '../../extent';
 
 import {members as layoutAttributes} from '../fill_attributes';
 import {SegmentVector} from '../../segment';
 import {ProgramConfigurationSet} from '../../program_configuration';
+import {LineIndexArray, TriangleIndexArray} from '../../array_types.g';
 import {register} from '../../../util/web_worker_transfer';
 import {hasPattern} from '../pattern_bucket_features';
 
-import type {Bucket, BucketFeature, BucketParameters, PopulateParameters} from '../../bucket';
+import type {
+    Bucket,
+    BucketParameters,
+    BucketFeature,
+    PopulateParameters
+} from '../../bucket';
 import type {FillStyleLayer} from '../../../style/style_layer/fill_style_layer';
 import type {Context} from '../../../gl/context';
 import type {IndexBuffer} from '../../../gl/index_buffer';
 import type {VertexBuffer} from '../../../gl/vertex_buffer';
 import type {FeatureStates} from '../../../source/source_state';
 import type {ImagePosition} from '../../../render/image_atlas';
-import {
-    createSelectionVector,
-    type FeatureTable,
-    filter,
-    type IGeometryVector,
-    type SelectionVector
-} from '@maplibre/mlt';
+import {type FeatureTable, filter, type IGeometryVector, type SelectionVector} from '@maplibre/mlt';
 import {type VectorTileLayer} from '@mapbox/vector-tile';
 import earcut from 'earcut';
 import {type Feature} from '@maplibre/maplibre-gl-style-spec';
+import {type DashEntry} from '../../../render/line_atlas';
 import {type CanonicalTileID} from '../../../tile/tile_id';
 
-export class ColumnarFillBucket implements Bucket {
-    isColumnar = true;
+export class ColumnarFillBucket implements Bucket<FeatureTable> {
+    // TODO(mlt-pipeline): Remove isColumnar once MLT has its own worker pipeline separate from MVT.
+    // Used by worker_tile to route FeatureTable to columnar buckets while the two pipelines are shared.
+    readonly isColumnar = true;
+
     index: number;
     zoom: number;
     overscaling: number;
@@ -72,12 +76,12 @@ export class ColumnarFillBucket implements Bucket {
         this.stateDependentLayerIds = this.layers.filter((l) => l.isStateDependent()).map((l) => l.id);
     }
 
-    populate<T>(data: T, options: PopulateParameters, canonical: CanonicalTileID): void {
-        this.populatePolygon(data as FeatureTable, options, canonical);
+    populate(featureTable: FeatureTable, options: PopulateParameters, canonical: CanonicalTileID): void {
+        this.populatePolygon(featureTable, options, canonical);
     }
 
-    update<T>(states: FeatureStates, layerData: T, imagePositions: { [_: string]: ImagePosition }): void {
-        this.updateColumnar(states, layerData as VectorTileLayer, imagePositions);
+    update(states: FeatureStates, vtLayer: VectorTileLayer, imagePositions: Record<string, ImagePosition>, dashPositions?: Record<string, DashEntry>): void {
+        this.updateColumnar(states, vtLayer, imagePositions);
     }
 
     populatePolygon(featureTable: FeatureTable, options: PopulateParameters, canonical: CanonicalTileID) {
@@ -97,6 +101,8 @@ export class ColumnarFillBucket implements Bucket {
         } else {
             selectionVector = filter(featureTable, filterSpecification);
         }
+
+        const selectionVector = filter(featureTable, filterSpecification);
 
         if (selectionVector.limit === 0) {
             return;

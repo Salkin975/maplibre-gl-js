@@ -87,7 +87,7 @@ type GradientTexture = {
  * @internal
  * Line bucket class
  */
-export class LineBucket implements Bucket {
+export class LineBucket implements Bucket<IndexedFeature[]> {
     distance: number;
     totalDistance: number;
     maxLineLength: number;
@@ -145,8 +145,7 @@ export class LineBucket implements Bucket {
         this.stateDependentLayerIds = this.layers.filter((l) => l.isStateDependent()).map((l) => l.id);
     }
 
-    populate<T>(data: T, options: PopulateParameters, canonical: CanonicalTileID): void {
-        const features = data as Array<IndexedFeature>;
+    populate(features: IndexedFeature[], options: PopulateParameters, canonical: CanonicalTileID): void {
         console.log('[LineBucket] populate called with', features.length, 'features');
         this.hasDependencies = hasPattern('line', this.layers, options) || this.hasLineDasharray(this.layers);
         const lineSortKey = this.layers[0].layout.get('line-sort-key');
@@ -207,8 +206,7 @@ export class LineBucket implements Bucket {
         }
     }
 
-    update<T>(states: FeatureStates, layerData: T, imagePositions: {[_: string]: ImagePosition}, dashPositions?: Record<string, DashEntry>): void {
-        const vtLayer = layerData as VectorTileLayerLike;
+    update(states: FeatureStates, vtLayer: VectorTileLayerLike, imagePositions: {[_: string]: ImagePosition}, dashPositions?: Record<string, DashEntry>): void {
         if (!this.stateDependentLayers.length) return;
         this.programConfigurations.updatePaintArrays(states, vtLayer, this.stateDependentLayers, {
             imagePositions,

@@ -58,7 +58,7 @@ type CentroidAccumulator = {
     sampleCount: number;
 };
 
-export class FillExtrusionBucket implements Bucket {
+export class FillExtrusionBucket implements Bucket<IndexedFeature[]> {
     index: number;
     zoom: number;
     overscaling: number;
@@ -98,8 +98,7 @@ export class FillExtrusionBucket implements Bucket {
         this.stateDependentLayerIds = this.layers.filter((l) => l.isStateDependent()).map((l) => l.id);
     }
 
-    populate<T>(data: T, options: PopulateParameters, canonical: CanonicalTileID): void {
-        const features = data as Array<IndexedFeature>;
+    populate(features: IndexedFeature[], options: PopulateParameters, canonical: CanonicalTileID): void {
         this.features = [];
         this.hasDependencies = hasPattern('fill-extrusion', this.layers, options);
 
@@ -136,8 +135,7 @@ export class FillExtrusionBucket implements Bucket {
         }
     }
 
-    update<T>(states: FeatureStates, layerData: T, imagePositions: {[_: string]: ImagePosition}, dashPositions?: Record<string, DashEntry>): void {
-        const vtLayer = layerData as VectorTileLayerLike;
+    update(states: FeatureStates, vtLayer: VectorTileLayerLike, imagePositions: {[_: string]: ImagePosition}, dashPositions?: Record<string, DashEntry>): void {
         if (!this.stateDependentLayers.length) return;
         this.programConfigurations.updatePaintArrays(states, vtLayer, this.stateDependentLayers, {
             imagePositions

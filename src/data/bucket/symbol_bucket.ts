@@ -306,7 +306,7 @@ register('CollisionBuffers', CollisionBuffers);
  *    which symbols can actually show on the map. Collided symbols are hidden
  *    using a dynamic "OpacityVertexArray".
  */
-export class SymbolBucket implements Bucket {
+export class SymbolBucket implements Bucket<IndexedFeature[]> {
     static MAX_GLYPHS: number;
     static addDynamicAttributes: typeof addDynamicAttributes;
 
@@ -430,8 +430,7 @@ export class SymbolBucket implements Bucket {
         }
     }
 
-    populate<T>(data: T, options: PopulateParameters, canonical: CanonicalTileID): void {
-        const features = data as Array<IndexedFeature>;
+    populate(features: IndexedFeature[], options: PopulateParameters, canonical: CanonicalTileID): void {
         const layer = this.layers[0];
         const layout = layer.layout;
 
@@ -559,8 +558,8 @@ export class SymbolBucket implements Bucket {
         }
     }
 
-    update<T>(states: FeatureStates, layerData: T, imagePositions: {[_: string]: ImagePosition}, dashPositions?: Record<string, DashEntry>): void {
-        const vtLayer = layerData as VectorTileLayerLike;
+    update(states: FeatureStates, layerData: VectorTileLayerLike, imagePositions: {[_: string]: ImagePosition}, dashPositions?: Record<string, DashEntry>): void {
+        const vtLayer = layerData;
         if (!this.stateDependentLayers.length) return;
         this.text.programConfigurations.updatePaintArrays(states, vtLayer, this.layers, {
             imagePositions

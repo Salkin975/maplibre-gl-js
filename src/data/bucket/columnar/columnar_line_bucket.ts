@@ -1,19 +1,15 @@
-import {LineLayoutArray, LineExtLayoutArray} from '../../array_types.g';
-
+import {LineLayoutArray} from '../../array_types.g';
 import {members as layoutAttributes} from '../line_attributes';
-import {members as layoutAttributesExt} from '../line_attributes_ext';
 import {SegmentVector} from '../../segment';
 import {ProgramConfigurationSet} from '../../program_configuration';
 import {TriangleIndexArray} from '../../array_types.g';
 import {EXTENT} from '../../extent';
 import {register} from '../../../util/web_worker_transfer';
-import {hasPattern, addPatternDependencies} from '../pattern_bucket_features';
-
+import {hasPattern} from '../pattern_bucket_features';
 import type {
     Bucket,
     BucketParameters,
     BucketFeature,
-    IndexedFeature,
     PopulateParameters
 } from '../../bucket';
 import type {LineStyleLayer} from '../../../style/style_layer/line_style_layer';
@@ -67,35 +63,39 @@ const LINE_DISTANCE_SCALE = 1 / 2;
 // The maximum line distance, in tile units, that fits in the buffer.
 const MAX_LINE_DISTANCE = Math.pow(2, LINE_DISTANCE_BUFFER_BITS - 1) / LINE_DISTANCE_SCALE;
 
-type LineClips = {
-    start: number;
-    end: number;
-};
-
 type GradientTexture = {
     texture?: Texture;
     gradient?: RGBAImage;
     version?: number;
 };
 
-const BITS = 15;
-const MAX = Math.pow(2, BITS - 1) - 1;
-const MIN = -MAX - 1;
+/**
+ * Recursively walks a serialized style expression and collects all property names
+ * referenced by ['get', 'propName'] sub-expressions.
+ */
+function collectGetPropertyNames(expr: unknown, result: Set<string>): void {
+    if (!Array.isArray(expr)) return;
+    if (expr[0] === 'get' && expr.length === 2 && typeof expr[1] === 'string') {
+        result.add(expr[1]);
+        return;
+    }
+    for (const item of expr) {
+        collectGetPropertyNames(item, result);
+    }
+}
 
 /**
  * @internal
  * Line bucket class
  */
-export class ColumnarLineBucket implements Bucket {
+export class ColumnarLineBucket implements Bucket<FeatureTable> {
     // TODO(mlt-pipeline): Remove isColumnar once MLT has its own worker pipeline separate from MVT.
     // Used by worker_tile to route FeatureTable to columnar buckets while the two pipelines are shared.
     readonly isColumnar = true;
 
     distance: number;
     totalDistance: number;
-    maxLineLength: number;
     scaledDistance: number;
-    lineClips?: LineClips;
 
     e1: number;
     e2: number;
@@ -109,12 +109,9 @@ export class ColumnarLineBucket implements Bucket {
     stateDependentLayers: Array<any>;
     stateDependentLayerIds: Array<string>;
     patternFeatures: Array<BucketFeature>;
-    lineClipsArray: Array<LineClips>;
 
     layoutVertexArray: LineLayoutArray;
     layoutVertexBuffer: VertexBuffer;
-    layoutVertexArray2: LineExtLayoutArray;
-    layoutVertexBuffer2: VertexBuffer;
 
     indexArray: TriangleIndexArray;
     indexBuffer: IndexBuffer;
@@ -124,9 +121,8 @@ export class ColumnarLineBucket implements Bucket {
     segments: SegmentVector;
     uploaded: boolean;
 
-    indexArrayLength = 0;
-    layoutVertexArrayByteLength = 0;
-    maxIndex = 0;
+    /** Feature property names referenced by data-driven paint expressions for the current populate call. null = extract all. */
+    private _neededProperties: Set<string> | null = null;
 
     constructor(options: BucketParameters<LineStyleLayer>) {
         this.zoom = options.zoom;
@@ -136,28 +132,25 @@ export class ColumnarLineBucket implements Bucket {
         this.index = options.index;
         this.hasDependencies = false;
         this.patternFeatures = [];
-        this.lineClipsArray = [];
         this.gradients = {};
         this.layers.forEach(layer => {
             this.gradients[layer.id] = {};
         });
 
         this.layoutVertexArray = new LineLayoutArray();
-        this.layoutVertexArray2 = new LineExtLayoutArray();
         this.indexArray = new TriangleIndexArray();
         this.programConfigurations = new ProgramConfigurationSet(options.layers, options.zoom);
         this.segments = new SegmentVector();
-        this.maxLineLength = 0;
 
         this.stateDependentLayerIds = this.layers.filter((l) => l.isStateDependent()).map((l) => l.id);
     }
 
-    populate<T>(data: T, options: PopulateParameters, canonical: CanonicalTileID): void {
-        this.populateLine(data as FeatureTable, options, canonical);
+    populate(featureTable: FeatureTable, options: PopulateParameters, canonical: CanonicalTileID): void {
+        this.populateLine(featureTable, options, canonical);
     }
 
-    update<T>(states: FeatureStates, layerData: T, imagePositions: {[_: string]: ImagePosition}): void {
-        this.updateColumnar(states, layerData as VectorTileLayer, imagePositions);
+    update(states: FeatureStates, vtLayer: VectorTileLayer, imagePositions: {[_: string]: ImagePosition}): void {
+        this.updateColumnar(states, vtLayer, imagePositions);
     }
 
     private buildPaintFeature(featureTable: FeatureTable, featureIndex: number): {type: string; id: number; properties: Record<string, unknown>} {
@@ -167,6 +160,8 @@ export class ColumnarLineBucket implements Bucket {
         if (propertyVectors) {
             for (const propertyColumn of propertyVectors) {
                 if (!propertyColumn) continue;
+                // Skip columns not referenced by any data-driven paint expression.
+                if (this._neededProperties !== null && !this._neededProperties.has(propertyColumn.name)) continue;
                 const value = propertyColumn.getValue(featureIndex);
                 if (value !== null) {
                     properties[propertyColumn.name] = typeof value === 'bigint' ? Number(value) : value;
@@ -177,8 +172,29 @@ export class ColumnarLineBucket implements Bucket {
     }
 
     private paintIsDataDriven(): boolean {
+        // Data-driven binders (SourceExpressionBinder, CompositeExpressionBinder, CrossFadedBinder)
+        // all carry an `expression` field; ConstantBinder does not.
         return Object.values(this.programConfigurations.programConfigurations)
-            .some(cfg => Object.values(cfg.binders).some(b => 'populatePaintArray' in b));
+            .some(cfg => Object.values(cfg.binders).some(b => 'expression' in b));
+    }
+
+    /**
+     * Computes the set of feature property names actually referenced by data-driven
+     * paint expressions, so that buildPaintFeature can skip unneeded columns.
+     * Returns null as a safe fallback (= extract all properties) if any binder's
+     * expression cannot be serialized.
+     */
+    private computeNeededPropertyNames(): Set<string> | null {
+        const needed = new Set<string>();
+        for (const cfg of Object.values(this.programConfigurations.programConfigurations)) {
+            for (const binder of Object.values(cfg.binders)) {
+                if (!('expression' in binder)) continue;
+                const expr = (binder as any).expression;
+                if (typeof expr?.serialize !== 'function') return null;
+                collectGetPropertyNames(expr.serialize(), needed);
+            }
+        }
+        return needed;
     }
 
     populateLine(featureTable: FeatureTable, options: PopulateParameters, canonical: CanonicalTileID) {
@@ -213,6 +229,15 @@ export class ColumnarLineBucket implements Bucket {
         const roundLimit = layout.get('line-round-limit');
 
         const paintDataDriven = this.paintIsDataDriven();
+        this._neededProperties = paintDataDriven ? this.computeNeededPropertyNames() : null;
+
+        if (this.layers[0].paint.get('line-gradient')) {
+            console.warn(`[ColumnarLineBucket] line-gradient is not yet supported in the columnar pipeline (layer "${this.layers[0].id}"). The gradient will not be applied.`);
+        }
+
+        if (paintDataDriven) {
+            console.log(`[ColumnarLineBucket] Data-driven styling active for layer "${this.layers[0].id}" on tile z=${canonical.z} x=${canonical.x} y=${canonical.y} (${featureTable.numFeatures} features)`);
+        }
 
         if(geometryVector.containsSingleGeometryType() && topologyVector.partOffsets && !topologyVector.geometryOffsets){
             this.addLineStrings(featureTable, selectionVector, lineJoin, cap, miterLimit, roundLimit, canonical, paintDataDriven);
@@ -332,9 +357,6 @@ export class ColumnarLineBucket implements Bucket {
 
     upload(context: Context) {
         if (!this.uploaded) {
-            if (this.layoutVertexArray2.length !== 0) {
-                this.layoutVertexBuffer2 = context.createVertexBuffer(this.layoutVertexArray2, layoutAttributesExt);
-            }
             this.layoutVertexBuffer = context.createVertexBuffer(this.layoutVertexArray, layoutAttributes);
             this.indexBuffer = context.createIndexBuffer(this.indexArray);
         }
@@ -366,6 +388,10 @@ export class ColumnarLineBucket implements Bucket {
                 ? this.buildPaintFeature(featureTable, index)
                 : {type: 'LineString', id: featureTable.idVector ? Number(featureTable.idVector.getValue(index)) : index, properties: {}};
             const join = joinIsDataDriven ? lineJoin.evaluate(feature as any, {}) : constantJoin;
+
+            if (paintDataDriven) {
+                console.log(`[ColumnarLineBucket] Data-driven styling on LineString feature id=${feature.id} properties=${JSON.stringify(feature.properties)}`);
+            }
 
             const startOffset = partOffsets[index];
             const endOffset = partOffsets[index+1];
@@ -399,6 +425,10 @@ export class ColumnarLineBucket implements Bucket {
                 ? this.buildPaintFeature(featureTable, index)
                 : {type: 'LineString', id: featureTable.idVector ? Number(featureTable.idVector.getValue(index)) : index, properties: {}};
             const join = joinIsDataDriven ? lineJoin.evaluate(feature as any, {}) : constantJoin;
+
+            if (paintDataDriven) {
+                console.log(`[ColumnarLineBucket] Data-driven styling on MultiLineString feature id=${feature.id} properties=${JSON.stringify(feature.properties)}`);
+            }
 
             const numLineStrings = geometryOffsets[index+1] - geometryOffsets[index];
             let partOffset = geometryOffsets[index];
@@ -437,6 +467,10 @@ export class ColumnarLineBucket implements Bucket {
                 ? this.buildPaintFeature(featureTable, index)
                 : {type: 'LineString', id: featureTable.idVector ? Number(featureTable.idVector.getValue(index)) : index, properties: {}};
             const join = joinIsDataDriven ? lineJoin.evaluate(feature as any, {}) : constantJoin;
+
+            if (paintDataDriven) {
+                console.log(`[ColumnarLineBucket] Data-driven styling on Polygon feature id=${feature.id} properties=${JSON.stringify(feature.properties)}`);
+            }
 
             const geometryType = geometryVector.geometryType(index);
             const ringOffsetStart = partOffsets[index];
@@ -477,6 +511,10 @@ export class ColumnarLineBucket implements Bucket {
                 ? this.buildPaintFeature(featureTable, index)
                 : {type: 'LineString', id: featureTable.idVector ? Number(featureTable.idVector.getValue(index)) : index, properties: {}};
             const join = joinIsDataDriven ? lineJoin.evaluate(feature as any, {}) : constantJoin;
+
+            if (paintDataDriven) {
+                console.log(`[ColumnarLineBucket] Data-driven styling on MultiPolygon feature id=${feature.id} properties=${JSON.stringify(feature.properties)}`);
+            }
 
             const geometryType = geometryVector.geometryType(index);
             const partOffsetStart = geometryOffsets[index];
@@ -692,7 +730,6 @@ export class ColumnarLineBucket implements Bucket {
             if (currentJoin === 'miter') {
                 joinNormal._mult(miterLength);
                 this.addCurrentVertex(currentVertexX, currentVertexY, joinNormal, 0, 0, segment);
-
             } else if (currentJoin === 'flipbevel') {
                 // miter is too big, flip the direction to make a beveled join
 
@@ -828,17 +865,10 @@ export class ColumnarLineBucket implements Bucket {
             linesofarScaled >> 6
         );
 
-        this.layoutVertexArrayByteLength += 8;
-
         const e = segment.vertexLength++;
         if (this.e1 >= 0 && this.e2 >= 0) {
             this.indexArray.emplaceBack(this.e1, this.e2, e);
             segment.primitiveLength++;
-
-            this.indexArrayLength += 3;
-            if(e > this.maxIndex) {
-                this.maxIndex = e;
-            }
         }
         if (up) {
             this.e2 = e;
@@ -848,10 +878,13 @@ export class ColumnarLineBucket implements Bucket {
     }
 
     updateScaledDistance() {
-        // Knowing the ratio of the full linestring covered by this tiled feature, as well
-        // as the total distance (in tile units) of this tiled feature, and the distance
-        // (in tile units) of the current vertex, we can determine the relative distance
-        // of this vertex along the full linestring feature and scale it to [0, 2^15)
+        // TODO(mlt-pipeline): Implement cross-tile line distance continuity.
+        // The original LineBucket scales distance using a lineClips ratio
+        // (start/end fractions of the full feature length covered by this tile)
+        // so that line-dasharray and line-gradient patterns are continuous across
+        // tile boundaries. MLT does not yet expose the clip ratio, so for now
+        // scaledDistance equals the raw accumulated distance, which means dashes
+        // and gradients will reset at each tile edge.
         this.scaledDistance = this.distance;
     }
 

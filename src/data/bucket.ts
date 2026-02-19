@@ -10,7 +10,8 @@ import type Point from '@mapbox/point-geometry';
 import type {SubdivisionGranularitySetting} from '../render/subdivision_granularity_settings';
 import type {DashEntry} from '../render/line_atlas';
 import type {Feature as StyleFeature} from '@maplibre/maplibre-gl-style-spec';
-import type {VectorTileFeatureLike, VectorTileLayerLike} from '@maplibre/vt-pbf';
+import type {Feature, VectorTileFeatureLike, VectorTileLayerLike} from '@maplibre/vt-pbf';
+import {FeatureTable} from "@maplibre/mlt";
 
 export type BucketParameters<Layer extends TypedStyleLayer> = {
     index: number;
@@ -81,14 +82,14 @@ export type BucketFeature = {
  * the array data now stored in `bucket.buffers: BufferGroup`. BufferGroups
  * hold the same data as ArrayGroups, but are tuned for consumption by WebGL.
  */
-export interface Bucket {
+export interface Bucket<T extends FeatureTable | IndexedFeature[] = FeatureTable | IndexedFeature[]> {
     layerIds: Array<string>;
     hasDependencies: boolean;
     readonly layers: Array<any>;
     readonly stateDependentLayers: Array<any>;
     readonly stateDependentLayerIds: Array<string>;
-    populate<T>(data: T, options: PopulateParameters, canonical: CanonicalTileID): void;
-    update<T>(states: FeatureStates, layerData: T, imagePositions: {[_: string]: ImagePosition}, dashPositions?: Record<string, DashEntry>): void;
+    populate(data: T, options: PopulateParameters, canonical: CanonicalTileID): void;
+    update(states: FeatureStates, vtLayer: VectorTileLayerLike, imagePositions: {[_: string]: ImagePosition}, dashPositions?: Record<string, DashEntry>): void;
     isEmpty(): boolean;
     upload(context: Context): void;
     uploadPending(): boolean;

@@ -33,7 +33,7 @@ import {fillLargeMeshArrays} from '../../render/fill_large_mesh_arrays';
 import type {VectorTileLayerLike} from '@maplibre/vt-pbf';
 import type {DashEntry} from '../../render/line_atlas';
 
-export class FillBucket implements Bucket {
+export class FillBucket implements Bucket<IndexedFeature[]> {
     index: number;
     zoom: number;
     overscaling: number;
@@ -76,8 +76,7 @@ export class FillBucket implements Bucket {
         this.stateDependentLayerIds = this.layers.filter((l) => l.isStateDependent()).map((l) => l.id);
     }
 
-    populate<T>(data: T, options: PopulateParameters, canonical: CanonicalTileID): void {
-        const features = data as Array<IndexedFeature>;
+    populate(features: IndexedFeature[], options: PopulateParameters, canonical: CanonicalTileID): void {
         console.log('[FillBucket] populate called with', features.length, 'features');
         this.hasDependencies = hasPattern('fill', this.layers, options);
         const fillSortKey = this.layers[0].layout.get('fill-sort-key');
@@ -130,10 +129,9 @@ export class FillBucket implements Bucket {
         }
     }
 
-    update<T>(states: FeatureStates, layerData: T, imagePositions: {
+    update(states: FeatureStates, vtLayer: VectorTileLayerLike, imagePositions: {
         [_: string]: ImagePosition;
     }, dashPositions?: Record<string, DashEntry>): void {
-        const vtLayer = layerData as VectorTileLayerLike;
         if (!this.stateDependentLayers.length) return;
         this.programConfigurations.updatePaintArrays(states, vtLayer, this.stateDependentLayers, {
             imagePositions

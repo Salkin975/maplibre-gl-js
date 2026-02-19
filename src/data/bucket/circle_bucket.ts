@@ -47,7 +47,7 @@ function addCircleVertex(layoutVertexArray, x, y, extrudeX, extrudeY) {
  * Each corner has a pos that is the center of the circle and an extrusion
  * vector that is where it points.
  */
-export class CircleBucket<Layer extends CircleStyleLayer | HeatmapStyleLayer> implements Bucket {
+export class CircleBucket<Layer extends CircleStyleLayer | HeatmapStyleLayer> implements Bucket<IndexedFeature[]> {
     index: number;
     zoom: number;
     overscaling: number;
@@ -82,8 +82,7 @@ export class CircleBucket<Layer extends CircleStyleLayer | HeatmapStyleLayer> im
         this.stateDependentLayerIds = this.layers.filter((l) => l.isStateDependent()).map((l) => l.id);
     }
 
-    populate<T>(data: T, options: PopulateParameters, canonical: CanonicalTileID): void {
-        const features = data as Array<IndexedFeature>;
+    populate(features: IndexedFeature[], options: PopulateParameters, canonical: CanonicalTileID): void {
         const styleLayer = this.layers[0];
         const bucketFeatures: BucketFeature[] = [];
         let circleSortKey = null;
@@ -142,8 +141,7 @@ export class CircleBucket<Layer extends CircleStyleLayer | HeatmapStyleLayer> im
         }
     }
 
-    update<T>(states: FeatureStates, layerData: T, imagePositions: {[_: string]: ImagePosition}, dashPositions?: Record<string, DashEntry>): void {
-        const vtLayer = layerData as VectorTileLayerLike;
+    update(states: FeatureStates, vtLayer: VectorTileLayerLike, imagePositions: {[_: string]: ImagePosition}, dashPositions?: Record<string, DashEntry>): void {
         if (!this.stateDependentLayers.length) return;
         this.programConfigurations.updatePaintArrays(states, vtLayer, this.stateDependentLayers, {
             imagePositions
