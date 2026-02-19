@@ -347,7 +347,6 @@ export abstract class StyleLayer extends Evented {
     }
 
     private _computeHasDataDrivenPaintProperties(): boolean {
-        console.log(`[RECOMPUTE] Layer ${this.id} hasDataDrivenPaintProperties`);
         for (const property in this._transitionablePaint._values) {
             if (this._transitionablePaint._values[property].value.isDataDriven()) {
                 return true;

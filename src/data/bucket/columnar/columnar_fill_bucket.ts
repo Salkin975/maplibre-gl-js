@@ -66,10 +66,7 @@ export class ColumnarFillBucket implements Bucket {
         this.indexArray = new TriangleIndexArray();
         this.indexArray2 = new LineIndexArray();
         this.programConfigurations = new ProgramConfigurationSet(options.layers, options.zoom);
-        this.hasDataDrivenProperties = this.layers[0].hasDataDrivenPaintProperties();
-        if (this.hasDataDrivenProperties) {
-            console.log(`[BUCKET] Layer ${this.layers[0].id} with DATA-DRIVEN properties`);
-        }
+        this.hasDataDrivenProperties = this.layers.length > 0 && this.layers[0].hasDataDrivenPaintProperties();
         this.segments = new SegmentVector();
         this.segments2 = new SegmentVector();
         this.stateDependentLayerIds = this.layers.filter((l) => l.isStateDependent()).map((l) => l.id);
@@ -202,13 +199,6 @@ export class ColumnarFillBucket implements Bucket {
                 }
             }
         }
-
-        if (featuresCreated > 0) {
-            console.log(`[FEATURES] Created ${featuresCreated} features (data-driven)`);
-        }
-        if (featuresSkipped > 0) {
-            console.log(`[FEATURES] Skipped ${featuresSkipped} features (no data-driven props)`);
-        }
     }
 
     updateVertexBuffer(firstGeometryOffset: number, secondGeometryOffset: number, partOffsets: Uint32Array, ringOffsets: Uint32Array, geometryVector: IGeometryVector, vertexBufferOffset: number, extent: number): number {
@@ -336,12 +326,13 @@ export class ColumnarFillBucket implements Bucket {
                 lineSegment.primitiveLength += numVertices;
             }
 
-            const feature = this.hasDataDrivenProperties ? this.createFeature(featureTable, i) : {id: featureTable.idVector ? Number(featureTable.idVector.getValue(i)) : i} as any;
+            const featureIndex = Number(selectionVector.getIndex(i));
+            const feature = this.hasDataDrivenProperties ? this.createFeature(featureTable, featureIndex) : {id: featureTable.idVector ? Number(featureTable.idVector.getValue(featureIndex)) : featureIndex} as any;
             const paintOptions = {
                 imagePositions: null, canonical
             };
 
-            this.programConfigurations.populatePaintArrays(this.layoutVertexArray.length, feature, index, paintOptions);
+            this.programConfigurations.populatePaintArrays(this.layoutVertexArray.length, feature, featureIndex, paintOptions);
         }
     }
 
@@ -387,12 +378,13 @@ export class ColumnarFillBucket implements Bucket {
                 }
             }
 
-            const feature = this.hasDataDrivenProperties ? this.createFeature(featureTable, i) : {id: featureTable.idVector ? Number(featureTable.idVector.getValue(i)) : i} as any;
+            const featureIndex = Number(selectionVector.getIndex(i));
+            const feature = this.hasDataDrivenProperties ? this.createFeature(featureTable, featureIndex) : {id: featureTable.idVector ? Number(featureTable.idVector.getValue(featureIndex)) : featureIndex} as any;
             const paintOptions = {
                 imagePositions: null, canonical
             };
 
-            this.programConfigurations.populatePaintArrays(this.layoutVertexArray.length, feature, index, paintOptions);
+            this.programConfigurations.populatePaintArrays(this.layoutVertexArray.length, feature, featureIndex, paintOptions);
         }
     }
 
