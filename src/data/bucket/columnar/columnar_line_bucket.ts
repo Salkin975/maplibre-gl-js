@@ -70,21 +70,6 @@ type GradientTexture = {
 };
 
 /**
- * Recursively walks a serialized style expression and collects all property names
- * referenced by ['get', 'propName'] sub-expressions.
- */
-function collectGetPropertyNames(expr: unknown, result: Set<string>): void {
-    if (!Array.isArray(expr)) return;
-    if (expr[0] === 'get' && expr.length === 2 && typeof expr[1] === 'string') {
-        result.add(expr[1]);
-        return;
-    }
-    for (const item of expr) {
-        collectGetPropertyNames(item, result);
-    }
-}
-
-/**
  * @internal
  * Line bucket class
  */
@@ -117,12 +102,10 @@ export class ColumnarLineBucket implements Bucket<FeatureTable> {
     indexBuffer: IndexBuffer;
 
     hasDependencies: boolean;
+    hasDataDrivenProperties: boolean;
     programConfigurations: ProgramConfigurationSet<LineStyleLayer>;
     segments: SegmentVector;
     uploaded: boolean;
-
-    /** Feature property names referenced by data-driven paint expressions for the current populate call. null = extract all. */
-    private _neededProperties: Set<string> | null = null;
 
     constructor(options: BucketParameters<LineStyleLayer>) {
         this.zoom = options.zoom;
@@ -140,6 +123,7 @@ export class ColumnarLineBucket implements Bucket<FeatureTable> {
         this.layoutVertexArray = new LineLayoutArray();
         this.indexArray = new TriangleIndexArray();
         this.programConfigurations = new ProgramConfigurationSet(options.layers, options.zoom);
+        this.hasDataDrivenProperties = this.layers.length > 0 && this.layers[0].hasDataDrivenPaintProperties();
         this.segments = new SegmentVector();
 
         this.stateDependentLayerIds = this.layers.filter((l) => l.isStateDependent()).map((l) => l.id);
@@ -151,50 +135,6 @@ export class ColumnarLineBucket implements Bucket<FeatureTable> {
 
     update(states: FeatureStates, vtLayer: VectorTileLayer, imagePositions: {[_: string]: ImagePosition}): void {
         this.updateColumnar(states, vtLayer, imagePositions);
-    }
-
-    private buildPaintFeature(featureTable: FeatureTable, featureIndex: number): {type: string; id: number; properties: Record<string, unknown>} {
-        const id = featureTable.idVector ? Number(featureTable.idVector.getValue(featureIndex)) : featureIndex;
-        const properties: Record<string, unknown> = {};
-        const propertyVectors = featureTable.propertyVectors;
-        if (propertyVectors) {
-            for (const propertyColumn of propertyVectors) {
-                if (!propertyColumn) continue;
-                // Skip columns not referenced by any data-driven paint expression.
-                if (this._neededProperties !== null && !this._neededProperties.has(propertyColumn.name)) continue;
-                const value = propertyColumn.getValue(featureIndex);
-                if (value !== null) {
-                    properties[propertyColumn.name] = typeof value === 'bigint' ? Number(value) : value;
-                }
-            }
-        }
-        return {type: 'LineString', id, properties};
-    }
-
-    private paintIsDataDriven(): boolean {
-        // Data-driven binders (SourceExpressionBinder, CompositeExpressionBinder, CrossFadedBinder)
-        // all carry an `expression` field; ConstantBinder does not.
-        return Object.values(this.programConfigurations.programConfigurations)
-            .some(cfg => Object.values(cfg.binders).some(b => 'expression' in b));
-    }
-
-    /**
-     * Computes the set of feature property names actually referenced by data-driven
-     * paint expressions, so that buildPaintFeature can skip unneeded columns.
-     * Returns null as a safe fallback (= extract all properties) if any binder's
-     * expression cannot be serialized.
-     */
-    private computeNeededPropertyNames(): Set<string> | null {
-        const needed = new Set<string>();
-        for (const cfg of Object.values(this.programConfigurations.programConfigurations)) {
-            for (const binder of Object.values(cfg.binders)) {
-                if (!('expression' in binder)) continue;
-                const expr = (binder as any).expression;
-                if (typeof expr?.serialize !== 'function') return null;
-                collectGetPropertyNames(expr.serialize(), needed);
-            }
-        }
-        return needed;
     }
 
     populateLine(featureTable: FeatureTable, options: PopulateParameters, canonical: CanonicalTileID) {
@@ -228,28 +168,25 @@ export class ColumnarLineBucket implements Bucket<FeatureTable> {
         const miterLimit = layout.get('line-miter-limit');
         const roundLimit = layout.get('line-round-limit');
 
-        const paintDataDriven = this.paintIsDataDriven();
-        this._neededProperties = paintDataDriven ? this.computeNeededPropertyNames() : null;
-
         if (this.layers[0].paint.get('line-gradient')) {
             console.warn(`[ColumnarLineBucket] line-gradient is not yet supported in the columnar pipeline (layer "${this.layers[0].id}"). The gradient will not be applied.`);
         }
 
-        if (paintDataDriven) {
+        if (this.hasDataDrivenProperties) {
             console.log(`[ColumnarLineBucket] Data-driven styling active for layer "${this.layers[0].id}" on tile z=${canonical.z} x=${canonical.x} y=${canonical.y} (${featureTable.numFeatures} features)`);
         }
 
         if(geometryVector.containsSingleGeometryType() && topologyVector.partOffsets && !topologyVector.geometryOffsets){
-            this.addLineStrings(featureTable, selectionVector, lineJoin, cap, miterLimit, roundLimit, canonical, paintDataDriven);
+            this.addLineStrings(featureTable, selectionVector, lineJoin, cap, miterLimit, roundLimit, canonical);
         }
         else if(topologyVector.geometryOffsets && topologyVector.partOffsets && !topologyVector.ringOffsets){
-            this.addMultiLineStrings(featureTable, selectionVector, lineJoin, cap, miterLimit, roundLimit, canonical, paintDataDriven);
+            this.addMultiLineStrings(featureTable, selectionVector, lineJoin, cap, miterLimit, roundLimit, canonical);
         }
         else if(!topologyVector.geometryOffsets && topologyVector.partOffsets && topologyVector.ringOffsets){
-            this.addPolygon(featureTable, selectionVector, lineJoin, cap, miterLimit, roundLimit, canonical, paintDataDriven);
+            this.addPolygon(featureTable, selectionVector, lineJoin, cap, miterLimit, roundLimit, canonical);
         }
         else if(topologyVector.geometryOffsets && topologyVector.partOffsets && topologyVector.ringOffsets){
-            this.addMultiPolygon(featureTable, selectionVector, lineJoin, cap, miterLimit, roundLimit, canonical, paintDataDriven);
+            this.addMultiPolygon(featureTable, selectionVector, lineJoin, cap, miterLimit, roundLimit, canonical);
         }
         else{
             throw new Error('Point, MultiPoint or geometry type not supported for a LineLayer.');
@@ -373,25 +310,20 @@ export class ColumnarLineBucket implements Bucket<FeatureTable> {
     }
 
     addLineStrings(featureTable: FeatureTable, selectionVector: SelectionVector, lineJoin: any, cap: any,
-        miterLimit: any, roundLimit: any, canonical: CanonicalTileID, paintDataDriven: boolean){
+        miterLimit: any, roundLimit: any, canonical: CanonicalTileID){
         const geometryVector = featureTable.geometryVector as IGeometryVector;
         const partOffsets = geometryVector.topologyVector.partOffsets;
         const tileExtent = featureTable.extent;
 
         const joinIsDataDriven = !lineJoin.isConstant();
-        const needsFeature = joinIsDataDriven || paintDataDriven;
         const constantJoin = !joinIsDataDriven ? lineJoin.evaluate({} as any, {}) : null;
 
         for(let i = 0; i < selectionVector.limit; i++){
             const index = selectionVector.getIndex(i);
-            const feature = needsFeature
-                ? this.buildPaintFeature(featureTable, index)
+            const feature = this.hasDataDrivenProperties
+                ? this.createFeature(featureTable, index)
                 : {type: 'LineString', id: featureTable.idVector ? Number(featureTable.idVector.getValue(index)) : index, properties: {}};
             const join = joinIsDataDriven ? lineJoin.evaluate(feature as any, {}) : constantJoin;
-
-            if (paintDataDriven) {
-                console.log(`[ColumnarLineBucket] Data-driven styling on LineString feature id=${feature.id} properties=${JSON.stringify(feature.properties)}`);
-            }
 
             const startOffset = partOffsets[index];
             const endOffset = partOffsets[index+1];
@@ -409,26 +341,21 @@ export class ColumnarLineBucket implements Bucket<FeatureTable> {
     }
 
     addMultiLineStrings(featureTable: FeatureTable, selectionVector: SelectionVector, lineJoin: any, cap: any,
-        miterLimit: any, roundLimit: any, canonical: CanonicalTileID, paintDataDriven: boolean){
+        miterLimit: any, roundLimit: any, canonical: CanonicalTileID){
         const geometryVector = featureTable.geometryVector as IGeometryVector;
         const geometryOffsets = geometryVector.topologyVector.geometryOffsets;
         const partOffsets = geometryVector.topologyVector.partOffsets;
         const tileExtent = featureTable.extent;
 
         const joinIsDataDriven = !lineJoin.isConstant();
-        const needsFeature = joinIsDataDriven || paintDataDriven;
         const constantJoin = !joinIsDataDriven ? lineJoin.evaluate({} as any, {}) : null;
 
         for(let i = 0; i < selectionVector.limit; i++){
             const index = selectionVector.getIndex(i);
-            const feature = needsFeature
-                ? this.buildPaintFeature(featureTable, index)
+            const feature = this.hasDataDrivenProperties
+                ? this.createFeature(featureTable, index)
                 : {type: 'LineString', id: featureTable.idVector ? Number(featureTable.idVector.getValue(index)) : index, properties: {}};
             const join = joinIsDataDriven ? lineJoin.evaluate(feature as any, {}) : constantJoin;
-
-            if (paintDataDriven) {
-                console.log(`[ColumnarLineBucket] Data-driven styling on MultiLineString feature id=${feature.id} properties=${JSON.stringify(feature.properties)}`);
-            }
 
             const numLineStrings = geometryOffsets[index+1] - geometryOffsets[index];
             let partOffset = geometryOffsets[index];
@@ -451,26 +378,21 @@ export class ColumnarLineBucket implements Bucket<FeatureTable> {
     }
 
     addPolygon(featureTable: FeatureTable, selectionVector: SelectionVector, lineJoin: any, cap: any,
-        miterLimit: any, roundLimit: any, canonical: CanonicalTileID, paintDataDriven: boolean){
+        miterLimit: any, roundLimit: any, canonical: CanonicalTileID){
         const geometryVector = featureTable.geometryVector as IGeometryVector;
         const ringOffsets = geometryVector.topologyVector.ringOffsets;
         const partOffsets = geometryVector.topologyVector.partOffsets;
         const tileExtent = featureTable.extent;
 
         const joinIsDataDriven = !lineJoin.isConstant();
-        const needsFeature = joinIsDataDriven || paintDataDriven;
         const constantJoin = !joinIsDataDriven ? lineJoin.evaluate({} as any, {}) : null;
 
         for(let i = 0; i < selectionVector.limit; i++){
             const index = selectionVector.getIndex(i);
-            const feature = needsFeature
-                ? this.buildPaintFeature(featureTable, index)
+            const feature = this.hasDataDrivenProperties
+                ? this.createFeature(featureTable, index)
                 : {type: 'LineString', id: featureTable.idVector ? Number(featureTable.idVector.getValue(index)) : index, properties: {}};
             const join = joinIsDataDriven ? lineJoin.evaluate(feature as any, {}) : constantJoin;
-
-            if (paintDataDriven) {
-                console.log(`[ColumnarLineBucket] Data-driven styling on Polygon feature id=${feature.id} properties=${JSON.stringify(feature.properties)}`);
-            }
 
             const geometryType = geometryVector.geometryType(index);
             const ringOffsetStart = partOffsets[index];
@@ -494,7 +416,7 @@ export class ColumnarLineBucket implements Bucket<FeatureTable> {
     }
 
     addMultiPolygon(featureTable: FeatureTable, selectionVector: SelectionVector, lineJoin: any, cap: any,
-        miterLimit: any, roundLimit: any, canonical: CanonicalTileID, paintDataDriven: boolean){
+        miterLimit: any, roundLimit: any, canonical: CanonicalTileID){
         const geometryVector = featureTable.geometryVector as IGeometryVector;
         const geometryOffsets = geometryVector.topologyVector.geometryOffsets;
         const ringOffsets = geometryVector.topologyVector.ringOffsets;
@@ -502,19 +424,14 @@ export class ColumnarLineBucket implements Bucket<FeatureTable> {
         const tileExtent = featureTable.extent;
 
         const joinIsDataDriven = !lineJoin.isConstant();
-        const needsFeature = joinIsDataDriven || paintDataDriven;
         const constantJoin = !joinIsDataDriven ? lineJoin.evaluate({} as any, {}) : null;
 
         for(let i = 0; i < selectionVector.limit; i++){
             const index = selectionVector.getIndex(i);
-            const feature = needsFeature
-                ? this.buildPaintFeature(featureTable, index)
+            const feature = this.hasDataDrivenProperties
+                ? this.createFeature(featureTable, index)
                 : {type: 'LineString', id: featureTable.idVector ? Number(featureTable.idVector.getValue(index)) : index, properties: {}};
             const join = joinIsDataDriven ? lineJoin.evaluate(feature as any, {}) : constantJoin;
-
-            if (paintDataDriven) {
-                console.log(`[ColumnarLineBucket] Data-driven styling on MultiPolygon feature id=${feature.id} properties=${JSON.stringify(feature.properties)}`);
-            }
 
             const geometryType = geometryVector.geometryType(index);
             const partOffsetStart = geometryOffsets[index];
@@ -891,6 +808,27 @@ export class ColumnarLineBucket implements Bucket<FeatureTable> {
     updateDistance(x: number, y: number, x2: number, y2: number) {
         this.distance += VectorUtils.dist(x, y, x2, y2);
         this.updateScaledDistance();
+    }
+
+    private createFeature(featureTable: FeatureTable, featureIndex: number): {type: string; id: number; properties: Record<string, unknown>; geometry: []} {
+        const properties: Record<string, unknown> = {};
+        const propertyVectors = featureTable.propertyVectors;
+        if (propertyVectors) {
+            for (const propertyColumn of propertyVectors) {
+                if (!propertyColumn) continue;
+                const value = propertyColumn.getValue(featureIndex);
+                if (value !== null) {
+                    properties[propertyColumn.name] = typeof value === 'bigint' ? Number(value) : value;
+                }
+            }
+        }
+        const id = featureTable.idVector ? Number(featureTable.idVector.getValue(featureIndex)) : featureIndex;
+        return {
+            type: 'LineString',
+            id,
+            properties,
+            geometry: []
+        };
     }
 }
 
