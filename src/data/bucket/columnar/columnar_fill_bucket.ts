@@ -20,7 +20,7 @@ import type {IndexBuffer} from '../../../gl/index_buffer';
 import type {VertexBuffer} from '../../../gl/vertex_buffer';
 import type {FeatureStates} from '../../../source/source_state';
 import type {ImagePosition} from '../../../render/image_atlas';
-import {type FeatureTable, filter, type IGeometryVector, type SelectionVector} from '@maplibre/mlt';
+import {createSelectionVector, type FeatureTable, filter, type IGeometryVector, type SelectionVector} from '@maplibre/mlt';
 import {type VectorTileLayer} from '@mapbox/vector-tile';
 import earcut from 'earcut';
 import {type Feature} from '@maplibre/maplibre-gl-style-spec';
@@ -101,8 +101,6 @@ export class ColumnarFillBucket implements Bucket<FeatureTable> {
         } else {
             selectionVector = filter(featureTable, filterSpecification);
         }
-
-        const selectionVector = filter(featureTable, filterSpecification);
 
         if (selectionVector.limit === 0) {
             return;
@@ -261,7 +259,11 @@ export class ColumnarFillBucket implements Bucket<FeatureTable> {
             }
 
             // Prepare Segment mit tatsächlicher Vertex-Anzahl
-            const triangleSegment = this.segments.prepareSegment(actualVertexCount, this.layoutVertexArray, this.indexArray);
+            const triangleSegment = this.segments.prepareSegment(
+                actualVertexCount,
+                this.layoutVertexArray,
+                this.indexArray
+            );
 
             // Vertices zum Layout-Array hinzufügen
             for (let i = 0; i < vertices.length; i += 2) {

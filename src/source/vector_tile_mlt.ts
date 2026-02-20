@@ -1,5 +1,5 @@
 import Point from '@mapbox/point-geometry';
-import {type FeatureTable, decodeTile, type Feature as MLTFeature, GEOMETRY_TYPE} from '@maplibre/mlt';
+import {type FeatureTable, decodeTile, type Feature as MLTFeature, GEOMETRY_TYPE, type SelectionVector} from '@maplibre/mlt';
 import type {VectorTileFeatureLike, VectorTileLayerLike, VectorTileLike} from '@maplibre/vt-pbf';
 
 // TODO(mlt-pipeline): Remove MLTVectorTileFeature once MLT has its own worker pipeline separate from MVT.
@@ -30,7 +30,7 @@ class MLTVectorTileFeature implements VectorTileFeatureLike {
                 break;
             default:
                 this.type = 0;
-        };
+        }
         this.extent = extent;
         this.id = Number(this._featureData.id);
     }
@@ -73,6 +73,25 @@ class MLTVectorTileLayer implements VectorTileLayerLike {
         }
         return new MLTVectorTileFeature(this._features[i], this.extent);
     }
+}
+
+/**
+ * Returns only the features matched by sel, paired with their original source-layer index.
+ * Avoids triggering the full lazy-materialization cache on MLTVectorTileLayer.feature(i)
+ * by reading directly from the FeatureTable via getFeaturesForSelection().
+ *
+ * TODO(mlt-pipeline): Remove once all layer types have a dedicated columnar bucket.
+ */
+export function getFilteredMLTFeatures(
+    layer: VectorTileLayerLike,
+    sel: SelectionVector,
+): Array<{feature: VectorTileFeatureLike; index: number}> {
+    const mltLayer = layer as MLTVectorTileLayer;
+    const mltFeatures = mltLayer.featureTable.getFeaturesForSelection(sel);
+    return mltFeatures.map((f, j) => ({
+        feature: new MLTVectorTileFeature(f, mltLayer.extent),
+        index: sel.getIndex(j),
+    }));
 }
 
 export class MLTVectorTile implements VectorTileLike {

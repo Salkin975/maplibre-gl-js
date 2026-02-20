@@ -19,11 +19,13 @@ import type {StyleLayerIndex} from '../style/style_layer_index';
 import type {
     WorkerTileParameters,
     WorkerTileResult,
-} from '../source/worker_source';
-import type {PromoteIdSpecification} from '@maplibre/maplibre-gl-style-spec';
+} from './worker_source';
+import type {PromoteIdSpecification, ExpressionSpecification} from '@maplibre/maplibre-gl-style-spec';
 import type {VectorTileLike} from '@maplibre/vt-pbf';
 import {type GetDashesResponse, MessageType, type GetGlyphsResponse, type GetImagesResponse} from '../util/actor_messages';
 import type {SubdivisionGranularitySetting} from '../render/subdivision_granularity_settings';
+import {filter as mltFilter} from '@maplibre/mlt';
+import {getFilteredMLTFeatures} from './vector_tile_mlt';
 export class WorkerTile {
     tileID: OverscaledTileID;
     uid: string | number;
@@ -97,15 +99,23 @@ export class WorkerTile {
             }
 
             const sourceLayerIndex = sourceLayerCoder.encode(sourceLayerId);
-            // TODO(mlt-pipeline): Remove features array once MLT has its own worker pipeline separate from MVT.
-            // The shared MVT pipeline is used as a fallback for layer types that do not yet have a dedicated MLT bucket.
-            const features = [];
-            for (let index = 0; index < sourceLayer.length; index++) {
-                const feature = sourceLayer.feature(index);
-                const id = featureIndex.getId(feature, sourceLayerId);
-                features.push({feature, id, index, sourceLayerIndex});
-            }
             const featureTable = this.encoding === 'mlt' ? (sourceLayer as any).featureTable : undefined;
+
+            // TODO(mlt-pipeline): Remove getAllFeatures / lazy materialization once MLT has its own
+            // worker pipeline separate from MVT. The fallback is only needed for layer types that do
+            // not yet have a dedicated columnar bucket (e.g. SymbolBucket).
+            let allFeatures: Array<{feature: any; id: any; index: number; sourceLayerIndex: number}> | null = null;
+            const getAllFeatures = () => {
+                if (!allFeatures) {
+                    allFeatures = [];
+                    for (let index = 0; index < sourceLayer.length; index++) {
+                        const feature = sourceLayer.feature(index);
+                        const id = featureIndex.getId(feature, sourceLayerId);
+                        allFeatures.push({feature, id, index, sourceLayerIndex});
+                    }
+                }
+                return allFeatures;
+            };
 
             for (const family of layerFamilies[sourceLayerId]) {
                 const layer = family[0];
@@ -128,9 +138,31 @@ export class WorkerTile {
                     encoding: this.encoding
                 });
 
-                // TODO(mlt-pipeline): Remove isColumnar check once MLT has its own worker pipeline.
-                // In the dedicated MLT pipeline, featureTable is always passed directly without this fallback.
-                const populateData = featureTable && (bucket as any).isColumnar ? featureTable : features;
+                let populateData: any;
+                if (featureTable && (bucket as any).isColumnar) {
+                    // MLT columnar path: pass FeatureTable directly, no materialization needed.
+                    populateData = featureTable;
+                } else if (featureTable) {
+                    // MLT non-columnar path (e.g. SymbolBucket): apply the layer filter on the decoded
+                    // FeatureTable first so only matching features are materialised into IndexedFeature[].
+                    // Falls back to full materialisation if the filter expression uses operators that the
+                    // MLT filter does not support (e.g. zoom-dependent expressions).
+                    try {
+                        const sel = mltFilter(featureTable, layer.filter as ExpressionSpecification);
+                        populateData = getFilteredMLTFeatures(sourceLayer, sel).map(({feature, index}) => ({
+                            feature,
+                            id: featureIndex.getId(feature, sourceLayerId),
+                            index,
+                            sourceLayerIndex,
+                        }));
+                    } catch {
+                        populateData = getAllFeatures();
+                    }
+                } else {
+                    // MVT path: materialise all features (original behaviour).
+                    populateData = getAllFeatures();
+                }
+
                 bucket.populate(populateData, options, this.tileID.canonical);
                 featureIndex.bucketLayerIDs.push(family.map((l) => l.id));
             }
