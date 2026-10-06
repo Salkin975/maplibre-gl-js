@@ -31,7 +31,7 @@ import type Point from '@mapbox/point-geometry';
 import type {FeatureStates} from '../../source/source_state.ts';
 import type {ImagePosition} from '../../render/image_atlas.ts';
 import type {SubdivisionGranularitySetting} from '../../render/subdivision_granularity_settings.ts';
-import type {VectorTileLayerLike} from '@maplibre/vt-pbf';
+import type {VectorTileFeatureLike, VectorTileLayerLike} from '@maplibre/vt-pbf';
 import type {GetImagesResponse} from '../../util/actor_messages.ts';
 import type {StyleImage} from '../../style/style_image.ts';
 
@@ -81,7 +81,6 @@ export class FillBucket implements Bucket {
     }
 
     populate(features: IndexedFeature[], options: PopulateParameters, canonical: CanonicalTileID): void {
-        this.hasDependencies = hasPattern('fill', this.layers, options);
         const fillSortKey = this.layers[0].layout.get('fill-sort-key');
         const sortFeaturesByKey = !fillSortKey.isConstant();
         const bucketFeatures: BucketFeature[] = [];
@@ -111,7 +110,22 @@ export class FillBucket implements Bucket {
             bucketFeatures.push(bucketFeature);
         }
 
-        if (sortFeaturesByKey) {
+        this.addBucketFeatures(bucketFeatures, index => features[index].feature, options, canonical);
+    }
+
+    /**
+     * Writes the features `populate()` selected, in `fill-sort-key` order, and indexes them for
+     * `queryRenderedFeatures`. A feature whose pattern is not yet in the atlas is kept in
+     * `patternFeatures` and written by `addFeatures()` once it is.
+     */
+    protected addBucketFeatures(
+        bucketFeatures: BucketFeature[],
+        featureAt: (index: number) => VectorTileFeatureLike,
+        options: PopulateParameters,
+        canonical: CanonicalTileID,
+    ): void {
+        this.hasDependencies = hasPattern('fill', this.layers, options);
+        if (!this.layers[0].layout.get('fill-sort-key').isConstant()) {
             bucketFeatures.sort((a, b) => a.sortKey - b.sortKey);
         }
 
@@ -127,8 +141,7 @@ export class FillBucket implements Bucket {
                 this.addFeature(bucketFeature, geometry, index, canonical, {}, options.subdivisionGranularity);
             }
 
-            const feature = features[index].feature;
-            options.featureIndex.insert(feature, geometry, index, sourceLayerIndex, this.index);
+            options.featureIndex.insert(featureAt(index), geometry, index, sourceLayerIndex, this.index);
         }
     }
 

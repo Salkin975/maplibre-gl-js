@@ -59,10 +59,16 @@ class MLTVectorTileFeature implements VectorTileFeatureLike {
         this.id = toMvtValue(featureTable.idVector?.getValue(index)) as number | undefined;
     }
 
-    /** Returns copies of the decoded points, because bucket code is free to modify them. */
+    /**
+     * Returns copies of the decoded points, because bucket code is free to modify them. A
+     * pre-tessellated layer without ring topology has no rings to decode, so its triangles stand in.
+     */
     loadGeometry(): Point[][] {
         const geometryVector = this.layer.featureTable.geometryVector;
         if (!geometryVector) return [];
+        if (geometryVector instanceof GpuVector && !hasRingTopology(geometryVector)) {
+            return trianglesAsRings(geometryVector, this.index);
+        }
         const rings = geometryVector instanceof GpuVector ?
             tessellatedLayerGeometries(geometryVector)[this.index] :
             geometryVector.getGeometry(this.index);
@@ -84,6 +90,83 @@ function tessellatedLayerGeometries(geometryVector: GpuVector): ReturnType<GpuVe
         tessellatedGeometries.set(geometryVector, geometries);
     }
     return geometries;
+}
+
+/**
+ * Tells whether a tessellated layer stores its polygons' rings next to their triangles. A layer
+ * without them has no outline to draw, and `getGeometry()` throws on it.
+ */
+export function hasRingTopology(geometryVector: GpuVector): boolean {
+    return !!geometryVector.topologyVector?.ringOffsets;
+}
+
+/** Caches {@link inferVertexBases} per layer, since every feature's base depends on all features before it. */
+const inferredVertexBases = new WeakMap<GpuVector, Uint32Array>();
+
+/**
+ * Returns the position in `vertexBuffer` of feature `index`'s first vertex. The feature's entries in
+ * `indexBuffer` count from 0, so they address `vertexBuffer` only once this base is added.
+ *
+ * A layer without ring topology does not store how many vertices a feature has; see
+ * {@link inferVertexBases}.
+ */
+export function tessellatedVertexBase(geometryVector: GpuVector, index: number): number {
+    const topology = geometryVector.topologyVector;
+    if (topology?.ringOffsets) {
+        const rootIndex = topology.geometryOffsets?.[index] ?? index;
+        const ringIndex = topology.partOffsets?.[rootIndex] ?? rootIndex;
+        return topology.ringOffsets[ringIndex];
+    }
+
+    let bases = inferredVertexBases.get(geometryVector);
+    if (!bases) {
+        bases = inferVertexBases(geometryVector);
+        inferredVertexBases.set(geometryVector, bases);
+    }
+    return bases[index];
+}
+
+/**
+ * Returns the vertex base of every feature of a layer without ring topology, counting each feature's
+ * vertices as one more than the highest index its triangles use.
+ *
+ * The count comes out short when earcut dropped a feature's last vertex as a duplicate or collinear
+ * point, and every feature after it is then read from the wrong vertices.
+ */
+function inferVertexBases(geometryVector: GpuVector): Uint32Array {
+    const {triangleOffsets, indexBuffer} = geometryVector;
+    const numFeatures = triangleOffsets.length - 1;
+    const bases = new Uint32Array(numFeatures);
+    let base = 0;
+    for (let feature = 0; feature < numFeatures; feature++) {
+        bases[feature] = base;
+        let numVertices = 0;
+        for (let i = triangleOffsets[feature] * 3; i < triangleOffsets[feature + 1] * 3; i++) {
+            numVertices = Math.max(numVertices, indexBuffer[i] + 1);
+        }
+        base += numVertices;
+    }
+    return bases;
+}
+
+/**
+ * Returns a feature's triangles, each closed into a ring of its own. A layer without ring topology
+ * stores nothing else of a polygon, and the triangles cover the same area as its rings, so
+ * `queryRenderedFeatures` hits the same features.
+ */
+function trianglesAsRings(geometryVector: GpuVector, index: number): Point[][] {
+    const {triangleOffsets, indexBuffer} = geometryVector;
+    const vertexBase = tessellatedVertexBase(geometryVector, index);
+    const rings: Point[][] = [];
+    for (let i = triangleOffsets[index] * 3; i < triangleOffsets[index + 1] * 3; i += 3) {
+        const ring = [0, 1, 2].map(corner => {
+            const [x, y] = geometryVector.getVertex(vertexBase + indexBuffer[i + corner]);
+            return new Point(x, y);
+        });
+        ring.push(ring[0].clone());
+        rings.push(ring);
+    }
+    return rings;
 }
 
 /** Maps an MLT geometry type onto the 0-3 codes of `VectorTileFeatureLike['type']`. */
