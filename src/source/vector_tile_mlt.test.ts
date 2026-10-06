@@ -1,8 +1,8 @@
 import {describe, test, expect, vi, afterEach} from 'vitest';
 import {readFileSync} from 'fs';
 import path from 'path';
-import {decodeTile, encodeTile} from '@maplibre/mlt';
-import {MLTVectorTile, isMLTVectorTileLayer, type MLTVectorTileLayer} from './vector_tile_mlt';
+import {GEOMETRY_TYPE, FeatureTable, createFlatGpuVector, decodeTile, encodeTile} from '@maplibre/mlt';
+import {MLTVectorTile, MLTVectorTileLayer, hasRingTopology, isMLTVectorTileLayer, tessellatedVertexBase} from './vector_tile_mlt';
 
 function encode(): ArrayBuffer {
     const bytes = encodeTile([
@@ -172,5 +172,45 @@ describe('MLTVectorTile on real tiles', () => {
 
     test('matches the eagerly decoded features of a tile whose line layer stores its one geometry type once', () => {
         expectEagerlyDecodedFeatures('mlt/5/17/10.mlt');
+    });
+});
+
+describe('MLTVectorTileLayer on a pre-tessellated layer', () => {
+    /** Two polygons, a square and a triangle, stored as triangles only: no ring topology. */
+    function triangleOnlyLayer() {
+        const geometryVector = createFlatGpuVector(
+            new Uint32Array([GEOMETRY_TYPE.POLYGON, GEOMETRY_TYPE.POLYGON]),
+            new Uint32Array([0, 2, 3]),
+            new Uint32Array([0, 1, 2, 0, 2, 3, 0, 1, 2]),
+            new Int32Array([0, 0, 100, 0, 100, 100, 0, 100, 200, 0, 300, 0, 250, 100])
+        );
+        return new MLTVectorTileLayer(new FeatureTable('land', geometryVector, undefined, [], 4096, 2));
+    }
+
+    test('knows that a layer of triangles has no ring topology', () => {
+        const layer = triangleOnlyLayer();
+
+        expect(hasRingTopology(layer.featureTable.geometryVector as any)).toBe(false);
+    });
+
+    test('gives a feature its triangles as closed rings when it has no rings', () => {
+        const layer = triangleOnlyLayer();
+
+        const square = layer.feature(0).loadGeometry();
+        const triangle = layer.feature(1).loadGeometry();
+
+        expect(square).toHaveLength(2);
+        expect(triangle).toHaveLength(1);
+        // Every triangle is a ring of its own, closed by repeating its first corner.
+        expect(triangle[0]).toMatchObject([{x: 200, y: 0}, {x: 300, y: 0}, {x: 250, y: 100}, {x: 200, y: 0}]);
+        expect(square[1]).toMatchObject([{x: 0, y: 0}, {x: 100, y: 100}, {x: 0, y: 100}, {x: 0, y: 0}]);
+    });
+
+    test('finds where the vertices of a feature start when the tile does not say', () => {
+        const geometryVector = triangleOnlyLayer().featureTable.geometryVector as any;
+
+        // The square uses vertices 0 to 3, so the triangle starts at 4.
+        expect(tessellatedVertexBase(geometryVector, 0)).toBe(0);
+        expect(tessellatedVertexBase(geometryVector, 1)).toBe(4);
     });
 });

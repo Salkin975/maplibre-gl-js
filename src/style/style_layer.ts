@@ -83,7 +83,7 @@ export abstract class StyleLayer extends Evented<ErrorEventType> {
     sourceLayer: string;
     minzoom: number;
     maxzoom: number;
-    filter: FilterSpecification | void;
+    filter: FilterSpecification | undefined;
     visibility: VisibilitySpecification;
     private _evaluatedVisibility: 'visible' | 'none' | void;
 
@@ -153,7 +153,7 @@ export abstract class StyleLayer extends Evented<ErrorEventType> {
         }
     }
 
-    setFilter(filter: FilterSpecification | void): void {
+    setFilter(filter: FilterSpecification | undefined): void {
         this.filter = filter;
         this._featureFilter = featureFilter(filter, `layers[${this.id}].filter`, this._globalState);
     }
@@ -356,7 +356,7 @@ export abstract class StyleLayer extends Evented<ErrorEventType> {
             'metadata': this.metadata,
             'minzoom': this.minzoom,
             'maxzoom': this.maxzoom,
-            'filter': this.filter as FilterSpecification,
+            'filter': this.filter,
             'layout': this._unevaluatedLayout?.serialize(),
             'paint': this._transitionablePaint?.serialize()
         };
