@@ -7,8 +7,10 @@ import {GlyphAtlas} from '../render/glyph_atlas.ts';
 import {EvaluationParameters} from '../style/evaluation_parameters.ts';
 import {OverscaledTileID} from '../tile/tile_id.ts';
 import {type GetDashesResponse, MessageType, type GetImagesResponse} from '../util/actor_messages.ts';
+import {isMLTVectorTileLayer, MLTVectorTile} from './vector_tile_mlt.ts';
 
-import type {Bucket, PopulateParameters} from '../data/bucket.ts';
+import type {Bucket, IndexedFeature, PopulateParameters} from '../data/bucket.ts';
+import type {FeatureTable} from '@maplibre/mlt';
 import type {IActor} from '../util/actor.ts';
 import type {StyleLayer} from '../style/style_layer.ts';
 import type {StyleLayerIndex} from '../style/style_layer_index.ts';
@@ -18,7 +20,7 @@ import type {
     WorkerTileResult,
 } from './worker_source.ts';
 import type {PromoteIdSpecification} from '@maplibre/maplibre-gl-style-spec';
-import type {VectorTileLike} from '@maplibre/vt-pbf';
+import type {VectorTileLayerLike, VectorTileLike} from '@maplibre/vt-pbf';
 import type {SubdivisionGranularitySetting} from '../render/subdivision_granularity_settings.ts';
 export class WorkerTile {
     tileID: OverscaledTileID;
@@ -94,12 +96,11 @@ export class WorkerTile {
             }
 
             const sourceLayerIndex = sourceLayerCoder.encode(sourceLayerId);
-            const features = [];
-            for (let index = 0; index < sourceLayer.length; index++) {
-                const feature = sourceLayer.feature(index);
-                const id = featureIndex.getId(feature, sourceLayerId);
-                features.push({feature, id, index, sourceLayerIndex});
-            }
+            // Columnar buckets read the tile's columns as they are. The row list is only built when a
+            // bucket asks for it, and then once for all buckets of this source layer.
+            const featureTable = isMLTVectorTileLayer(sourceLayer) ? sourceLayer.featureTable : undefined;
+            let rowFeatures: IndexedFeature[] | undefined;
+            const getRowFeatures = () => (rowFeatures ??= materializeFeatures(sourceLayer, sourceLayerId, sourceLayerIndex, featureIndex));
 
             for (const family of layerFamilies[sourceLayerId]) {
                 const layer = family[0];
@@ -111,6 +112,8 @@ export class WorkerTile {
                 recalculateLayers(family, this.zoom, availableImages);
 
                 const bucket = buckets[layer.id] = layer.createBucket({
+                    // What the parsed layer is, not what was requested: an overzoomed MLT tile arrives as MVT.
+                    encoding: featureTable ? 'mlt' : 'mvt',
                     index: featureIndex.bucketLayerIDs.length,
                     layers: family,
                     zoom: this.zoom,
@@ -121,6 +124,9 @@ export class WorkerTile {
                     sourceID: this.source
                 });
 
+                // A bucket that is not columnar must not get the table, even for an MLT layer: its filter
+                // may not be plannable, in which case createBucket() returned a row-based bucket.
+                const features: IndexedFeature[] | FeatureTable = featureTable && bucket.isColumnar ? featureTable : getRowFeatures();
                 bucket.populate(features, options, this.tileID.canonical);
                 featureIndex.bucketLayerIDs.push(family.map((l) => l.id));
             }
@@ -188,6 +194,10 @@ export class WorkerTile {
             });
         }
 
+        // The buckets are complete and nothing reads the decoded columns any more. The tile stays in the
+        // worker for reloadTile(), which decodes again what it needs, so drop what is held in between.
+        if (data instanceof MLTVectorTile) data.releaseDecodedColumns();
+
         return {
             buckets: Object.values(buckets).filter(b => !b.isEmpty()),
             featureIndex,
@@ -209,4 +219,25 @@ function recalculateLayers(layers: readonly StyleLayer[], zoom: number, availabl
     for (const layer of layers) {
         layer.recalculate(parameters, availableImages);
     }
+}
+
+/**
+ * Reads every feature of `sourceLayer` into the row list a row-based bucket populates from.
+ *
+ * A tile whose layers all serve columnar buckets never calls this, and a source layer that serves
+ * both bucket kinds builds the list once and shares it.
+ */
+function materializeFeatures(
+    sourceLayer: VectorTileLayerLike,
+    sourceLayerId: string,
+    sourceLayerIndex: number,
+    featureIndex: FeatureIndex
+): IndexedFeature[] {
+    const features: IndexedFeature[] = [];
+    for (let index = 0; index < sourceLayer.length; index++) {
+        const feature = sourceLayer.feature(index);
+        const id = featureIndex.getId(feature, sourceLayerId);
+        features.push({feature, id, index, sourceLayerIndex});
+    }
+    return features;
 }
