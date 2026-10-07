@@ -20,7 +20,7 @@ import type {
     WorkerTileResult,
 } from './worker_source.ts';
 import type {PromoteIdSpecification} from '@maplibre/maplibre-gl-style-spec';
-import type {VectorTileLayerLike, VectorTileLike} from '@maplibre/vt-pbf';
+import type {VectorTileLike} from '@maplibre/vt-pbf';
 import type {SubdivisionGranularitySetting} from '../render/subdivision_granularity_settings.ts';
 export class WorkerTile {
     tileID: OverscaledTileID;
@@ -96,11 +96,14 @@ export class WorkerTile {
             }
 
             const sourceLayerIndex = sourceLayerCoder.encode(sourceLayerId);
-            // Columnar buckets read the tile's columns as they are. The row list is only built when a
-            // bucket asks for it, and then once for all buckets of this source layer.
-            const featureTable = isMLTVectorTileLayer(sourceLayer) ? sourceLayer.featureTable : undefined;
-            let rowFeatures: IndexedFeature[] | undefined;
-            const getRowFeatures = () => (rowFeatures ??= materializeFeatures(sourceLayer, sourceLayerId, sourceLayerIndex, featureIndex));
+            const mltLayer = isMLTVectorTileLayer(sourceLayer) ? sourceLayer : undefined;
+            const features = [];
+            for (let index = 0; !mltLayer && index < sourceLayer.length; index++) {
+                const feature = sourceLayer.feature(index);
+                const id = featureIndex.getId(feature, sourceLayerId);
+                features.push({feature, id, index, sourceLayerIndex});
+            }
+            let mltRows: IndexedFeature[] | undefined;
 
             for (const family of layerFamilies[sourceLayerId]) {
                 const layer = family[0];
@@ -112,8 +115,7 @@ export class WorkerTile {
                 recalculateLayers(family, this.zoom, availableImages);
 
                 const bucket = buckets[layer.id] = layer.createBucket({
-                    // What the parsed layer is, not what was requested: an overzoomed MLT tile arrives as MVT.
-                    encoding: featureTable ? 'mlt' : 'mvt',
+                    encoding: mltLayer ? 'mlt' : 'mvt',
                     index: featureIndex.bucketLayerIDs.length,
                     layers: family,
                     zoom: this.zoom,
@@ -126,8 +128,13 @@ export class WorkerTile {
 
                 // A bucket that is not columnar must not get the table, even for an MLT layer: its filter
                 // may not be plannable, in which case createBucket() returned a row-based bucket.
-                const features: IndexedFeature[] | FeatureTable = featureTable && bucket.isColumnar ? featureTable : getRowFeatures();
-                bucket.populate(features, options, this.tileID.canonical);
+                let populateFeatures: IndexedFeature[] | FeatureTable = features;
+                if (mltLayer) {
+                    populateFeatures = bucket.isColumnar ?
+                        mltLayer.featureTable :
+                        (mltRows ??= mltLayer.indexedFeatures((feature) => featureIndex.getId(feature, sourceLayerId), sourceLayerIndex));
+                }
+                bucket.populate(populateFeatures, options, this.tileID.canonical);
                 featureIndex.bucketLayerIDs.push(family.map((l) => l.id));
             }
         }
@@ -219,25 +226,4 @@ function recalculateLayers(layers: readonly StyleLayer[], zoom: number, availabl
     for (const layer of layers) {
         layer.recalculate(parameters, availableImages);
     }
-}
-
-/**
- * Reads every feature of `sourceLayer` into the row list a row-based bucket populates from.
- *
- * A tile whose layers all serve columnar buckets never calls this, and a source layer that serves
- * both bucket kinds builds the list once and shares it.
- */
-function materializeFeatures(
-    sourceLayer: VectorTileLayerLike,
-    sourceLayerId: string,
-    sourceLayerIndex: number,
-    featureIndex: FeatureIndex
-): IndexedFeature[] {
-    const features: IndexedFeature[] = [];
-    for (let index = 0; index < sourceLayer.length; index++) {
-        const feature = sourceLayer.feature(index);
-        const id = featureIndex.getId(feature, sourceLayerId);
-        features.push({feature, id, index, sourceLayerIndex});
-    }
-    return features;
 }

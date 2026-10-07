@@ -2,6 +2,7 @@ import Point from '@mapbox/point-geometry';
 import {type FeatureTable, type LayerBlock, createRowView, decodeTile, GEOMETRY_TYPE, GpuVector, scanLayerBlocks, toMvtValue} from '@maplibre/mlt';
 
 import type {VectorTileFeatureLike, VectorTileLayerLike, VectorTileLike} from '@maplibre/vt-pbf';
+import type {IndexedFeature} from '../data/bucket.ts';
 
 /** Options for {@link MLTVectorTile}. */
 export type MLTVectorTileOptions = {
@@ -126,6 +127,21 @@ export class MLTVectorTileLayer implements VectorTileLayerLike {
 
     feature(i: number): VectorTileFeatureLike {
         return new MLTVectorTileFeature(this, i);
+    }
+
+    /**
+     * Reads every feature into the row list a row-based bucket populates from. A columnar bucket
+     * reads `featureTable` directly and never needs it.
+     *
+     * @param getId - resolves a feature's id, which depends on the source's `promoteId`
+     */
+    indexedFeatures(getId: (feature: VectorTileFeatureLike) => string | number, sourceLayerIndex: number): IndexedFeature[] {
+        const features: IndexedFeature[] = [];
+        for (let index = 0; index < this.length; index++) {
+            const feature = this.feature(index);
+            features.push({feature, id: getId(feature), index, sourceLayerIndex});
+        }
+        return features;
     }
 
     /**
