@@ -19,11 +19,11 @@ import type {TileEncoding} from '../source/worker_source.ts';
 
 export type BucketParameters<Layer extends TypedStyleLayer> = {
     /**
-     * How the source layer this bucket is built from was encoded. It describes the parsed layer, not the
-     * request that fetched the tile: an overzoomed MLT tile is re-encoded to MVT, and its layers say `'mvt'`.
-     * A columnar bucket is only ever chosen for `'mlt'`.
+     * Set to `'mlt'` for a source layer that was decoded from an MLT tile; absent for any other layer.
+     * It describes the parsed layer, not the request that fetched the tile: an overzoomed MLT tile is
+     * re-encoded to MVT, and its layers carry no encoding. A columnar bucket is only ever chosen for `'mlt'`.
      */
-    encoding: TileEncoding;
+    encoding?: TileEncoding;
     index: number;
     layers: Layer[];
     zoom: number;
