@@ -36,7 +36,7 @@ import type {FeatureStates} from '../../source/source_state.ts';
 import type {ImagePosition} from '../../render/image_atlas.ts';
 import type {SubdivisionGranularitySetting} from '../../render/subdivision_granularity_settings.ts';
 import type {DashEntry} from '../../render/line_atlas.ts';
-import type {VectorTileLayerLike} from '@maplibre/vt-pbf';
+import type {VectorTileFeatureLike, VectorTileLayerLike} from '@maplibre/vt-pbf';
 
 // NOTE ON EXTRUDE SCALE:
 // scale the extrusion vector so that the normal length is this value.
@@ -164,7 +164,6 @@ export class LineBucket implements Bucket {
     }
 
     populate(features: IndexedFeature[], options: PopulateParameters, canonical: CanonicalTileID): void {
-        this.hasDependencies = hasPattern('line', this.layers, options) || this.hasLineDasharray(this.layers);
         const lineSortKey = this.layers[0].layout.get('line-sort-key');
         const sortFeaturesByKey = !lineSortKey.isConstant();
         const bucketFeatures: BucketFeature[] = [];
@@ -195,10 +194,23 @@ export class LineBucket implements Bucket {
             bucketFeatures.push(bucketFeature);
         }
 
-        if (sortFeaturesByKey) {
-            bucketFeatures.sort((a, b) => {
-                return (a.sortKey) - (b.sortKey);
-            });
+        this.addBucketFeatures(bucketFeatures, index => features[index].feature, options, canonical);
+    }
+
+    /**
+     * Writes the features `populate()` selected, in `line-sort-key` order, and indexes them for
+     * `queryRenderedFeatures`. A feature that needs a pattern or a data-driven dash is kept in
+     * `patternFeatures` and written by `addFeatures()` once the atlases hold them.
+     */
+    protected addBucketFeatures(
+        bucketFeatures: BucketFeature[],
+        featureAt: (index: number) => VectorTileFeatureLike,
+        options: PopulateParameters,
+        canonical: CanonicalTileID,
+    ): void {
+        this.hasDependencies = hasPattern('line', this.layers, options) || this.hasLineDasharray(this.layers);
+        if (!this.layers[0].layout.get('line-sort-key').isConstant()) {
+            bucketFeatures.sort((a, b) => a.sortKey - b.sortKey);
         }
 
         for (const bucketFeature of bucketFeatures) {
@@ -218,8 +230,7 @@ export class LineBucket implements Bucket {
                 this.addFeature(bucketFeature, geometry, index, canonical, {}, {}, options.subdivisionGranularity);
             }
 
-            const feature = features[index].feature;
-            options.featureIndex.insert(feature, geometry, index, sourceLayerIndex, this.index);
+            options.featureIndex.insert(featureAt(index), geometry, index, sourceLayerIndex, this.index);
         }
     }
 
