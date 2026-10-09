@@ -56,7 +56,8 @@ import type {SymbolQuad} from '../../symbol/quads.ts';
 import type {SizeData} from '../../symbol/symbol_size.ts';
 import type {FeatureStates} from '../../source/source_state.ts';
 import type {ImagePosition} from '../../render/image_atlas.ts';
-import type {VectorTileLayerLike} from '@maplibre/vt-pbf';
+import type {VectorTileFeatureLike, VectorTileLayerLike} from '@maplibre/vt-pbf';
+import type {EvaluationFeature} from '../evaluation_feature.ts';
 
 export type SingleCollisionBox = {
     x1: number;
@@ -469,23 +470,8 @@ export class SymbolBucket implements Bucket {
 
     populate(features: IndexedFeature[], options: PopulateParameters, canonical: CanonicalTileID): void {
         const layer = this.layers[0];
-        const layout = layer.layout;
-
-        const textFont = layout.get('text-font');
-        const textField = layout.get('text-field');
-        const iconImage = layout.get('icon-image');
-        const hasText =
-            (textField.value.kind !== 'constant' ||
-                (textField.value.value instanceof Formatted && !textField.value.value.isEmpty()) ||
-                textField.value.value.toString().length > 0) &&
-            (textFont.value.kind !== 'constant' || textFont.value.value.length > 0);
-        // we should always resolve the icon-image value if the property was defined in the style
-        // this allows us to fire the styleimagemissing event if image evaluation returns null
-        // the only way to distinguish between null returned from a coalesce statement with no valid images
-        // and null returned because icon-image wasn't defined is to check whether or not iconImage.parameters is an empty object
-        const hasIcon = iconImage.value.kind !== 'constant' || !!iconImage.value.value || Object.keys(iconImage.parameters).length > 0;
-        const symbolSortKey = layout.get('symbol-sort-key');
-        const pointPlacement = layout.get('symbol-placement') === 'point';
+        const hasText = this.layoutHasText();
+        const hasIcon = this.layoutHasIcon();
 
         this.features = [];
 
@@ -493,11 +479,7 @@ export class SymbolBucket implements Bucket {
             return;
         }
 
-        const icons = options.iconDependencies;
-        const stacks = options.glyphDependencies;
-        const availableImages = options.availableImages;
         const globalProperties = new EvaluationParameters(this.zoom);
-        const keepUpright = layout.get('text-keep-upright');
 
         for (const {feature, id, index, sourceLayerIndex} of features) {
 
@@ -507,74 +489,135 @@ export class SymbolBucket implements Bucket {
                 continue;
             }
 
-            if (!needGeometry)  evaluationFeature.geometry = loadGeometry(feature);
+            this.addSymbolFeature(feature, evaluationFeature, id, index, sourceLayerIndex, hasText, hasIcon, options, canonical);
+        }
 
-            if (pointPlacement && feature.type === 1 && isEveryPointOutsideTile(evaluationFeature.geometry)) continue;
+        this.finishSymbolFeatures();
+    }
 
-            let text: Formatted | void;
-            if (hasText) {
-                // Expression evaluation will automatically coerce to Formatted
-                // but plain string token evaluation skips that pathway so do the
-                // conversion here.
-                const resolvedTokens = layer.getValueAndResolveTokens('text-field', evaluationFeature, canonical, availableImages);
-                const formattedText = Formatted.factory(resolvedTokens);
+    /** Whether the layer can draw text at all: it has a `text-field` and a font to draw it with. */
+    protected layoutHasText(): boolean {
+        const layout = this.layers[0].layout;
+        const textFont = layout.get('text-font');
+        const textField = layout.get('text-field');
+        return (textField.value.kind !== 'constant' ||
+                (textField.value.value instanceof Formatted && !textField.value.value.isEmpty()) ||
+                textField.value.value.toString().length > 0) &&
+            (textFont.value.kind !== 'constant' || textFont.value.value.length > 0);
+    }
 
-                this.hasRTLText ||= containsRTLText(formattedText);
-                text = transformText(formattedText, layer, evaluationFeature);
-            }
+    /**
+     * Whether the layer resolves an icon. An `icon-image` defined in the style is always resolved, so
+     * that a null result still fires `styleimagemissing`; an empty `parameters` is the only sign that
+     * none was defined, since a `coalesce` without a valid image returns null as well.
+     */
+    protected layoutHasIcon(): boolean {
+        const iconImage = this.layers[0].layout.get('icon-image');
+        return iconImage.value.kind !== 'constant' || !!iconImage.value.value || Object.keys(iconImage.parameters).length > 0;
+    }
 
-            let icon: ResolvedImage;
-            if (hasIcon) {
-                // Expression evaluation will automatically coerce to Image
-                // but plain string token evaluation skips that pathway so do the
-                // conversion here.
-                const resolvedTokens = layer.getValueAndResolveTokens('icon-image', evaluationFeature, canonical, availableImages);
-                if (resolvedTokens instanceof ResolvedImage) {
-                    icon = resolvedTokens;
-                } else {
-                    icon = ResolvedImage.fromString(resolvedTokens);
-                }
-            }
+    /**
+     * Resolves the text and icon of one feature the layer filter selected, registers the glyphs and
+     * images they need in `options`, and appends the feature to `this.features`. A point label whose
+     * points all lie outside the tile, and a feature that resolves to neither text nor icon, are dropped.
+     *
+     * @param evaluationFeature - the feature as expressions see it; its geometry is loaded here when the filter did not need it
+     * @param id - the feature's id, resolved for the source's `promoteId`
+     * @param index - the feature's position in its source layer
+     * @param hasText - what {@link layoutHasText} returned for this `populate()`
+     * @param hasIcon - what {@link layoutHasIcon} returned for this `populate()`
+     */
+    protected addSymbolFeature(
+        feature: VectorTileFeatureLike,
+        evaluationFeature: EvaluationFeature,
+        id: any,
+        index: number,
+        sourceLayerIndex: number,
+        hasText: boolean,
+        hasIcon: boolean,
+        options: PopulateParameters,
+        canonical: CanonicalTileID,
+    ): void {
+        const layer = this.layers[0];
+        const layout = layer.layout;
+        const icons = options.iconDependencies;
+        const availableImages = options.availableImages;
 
-            if (!text && !icon) {
-                continue;
-            }
-            const sortKey = this.sortFeaturesByKey ?
-                symbolSortKey.evaluate(evaluationFeature, {}, canonical) :
-                undefined;
+        if (!layer._featureFilter.needGeometry)  evaluationFeature.geometry = loadGeometry(feature);
 
-            const symbolFeature: SymbolFeature = {
-                id,
-                text,
-                icon,
-                index,
-                sourceLayerIndex,
-                geometry: evaluationFeature.geometry,
-                properties: feature.properties,
-                type: VectorTileFeature.types[feature.type],
-                sortKey
-            };
-            this.features.push(symbolFeature);
+        const pointPlacement = layout.get('symbol-placement') === 'point';
+        if (pointPlacement && feature.type === 1 && isEveryPointOutsideTile(evaluationFeature.geometry)) return;
 
-            if (icon) {
-                icons[icon.name] = true;
-            }
+        let text: Formatted | void;
+        if (hasText) {
+            // Expression evaluation will automatically coerce to Formatted
+            // but plain string token evaluation skips that pathway so do the
+            // conversion here.
+            const resolvedTokens = layer.getValueAndResolveTokens('text-field', evaluationFeature, canonical, availableImages);
+            const formattedText = Formatted.factory(resolvedTokens);
 
-            if (text) {
-                const fontStack = textFont.evaluate(evaluationFeature, {}, canonical).join(',');
-                const textAlongLine = layout.get('text-rotation-alignment') !== 'viewport' && layout.get('symbol-placement') !== 'point';
-                this.allowVerticalPlacement = this.writingModes?.includes(WritingMode.vertical);
-                const needsVerticalForms = ((textAlongLine && keepUpright) || this.allowVerticalPlacement) &&
-                    allowsVerticalWritingMode(text.toString());
-                this.calculateGlyphDependencies(text, stacks, fontStack, needsVerticalForms);
+            this.hasRTLText ||= containsRTLText(formattedText);
+            text = transformText(formattedText, layer, evaluationFeature);
+        }
 
-                for (const section of text.sections) {
-                    if (section.image) icons[section.image.name] = true;
-                }
+        let icon: ResolvedImage;
+        if (hasIcon) {
+            // Expression evaluation will automatically coerce to Image
+            // but plain string token evaluation skips that pathway so do the
+            // conversion here.
+            const resolvedTokens = layer.getValueAndResolveTokens('icon-image', evaluationFeature, canonical, availableImages);
+            if (resolvedTokens instanceof ResolvedImage) {
+                icon = resolvedTokens;
+            } else {
+                icon = ResolvedImage.fromString(resolvedTokens);
             }
         }
 
-        if (layout.get('symbol-placement') === 'line') {
+        if (!text && !icon) {
+            return;
+        }
+        const sortKey = this.sortFeaturesByKey ?
+            layout.get('symbol-sort-key').evaluate(evaluationFeature, {}, canonical) :
+            undefined;
+
+        const symbolFeature: SymbolFeature = {
+            id,
+            text,
+            icon,
+            index,
+            sourceLayerIndex,
+            geometry: evaluationFeature.geometry,
+            properties: feature.properties,
+            type: VectorTileFeature.types[feature.type],
+            sortKey
+        };
+        this.features.push(symbolFeature);
+
+        if (icon) {
+            icons[icon.name] = true;
+        }
+
+        if (text) {
+            const fontStack = layout.get('text-font').evaluate(evaluationFeature, {}, canonical).join(',');
+            const textAlongLine = layout.get('text-rotation-alignment') !== 'viewport' && layout.get('symbol-placement') !== 'point';
+            const keepUpright = layout.get('text-keep-upright');
+            this.allowVerticalPlacement = this.writingModes?.includes(WritingMode.vertical);
+            const needsVerticalForms = ((textAlongLine && keepUpright) || this.allowVerticalPlacement) &&
+                allowsVerticalWritingMode(text.toString());
+            this.calculateGlyphDependencies(text, options.glyphDependencies, fontStack, needsVerticalForms);
+
+            for (const section of text.sections) {
+                if (section.image) icons[section.image.name] = true;
+            }
+        }
+    }
+
+    /**
+     * Merges adjacent line features with the same text for `symbol-placement: line`, then orders the
+     * features by `symbol-sort-key`. Merging can still change the list, so the order is settled only here.
+     */
+    protected finishSymbolFeatures(): void {
+        if (this.layers[0].layout.get('symbol-placement') === 'line') {
             // Merge adjacent lines with the same text to improve labeling.
             // It's better to place labels on one long line than on many short segments.
             this.features = mergeLines(this.features);
