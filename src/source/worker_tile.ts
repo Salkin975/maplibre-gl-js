@@ -8,6 +8,7 @@ import {EvaluationParameters} from '../style/evaluation_parameters.ts';
 import {OverscaledTileID} from '../tile/tile_id.ts';
 import {type GetDashesResponse, MessageType, type GetImagesResponse} from '../util/actor_messages.ts';
 import {hasRingTopology, isMLTVectorTileLayer, isPreTessellated, MLTVectorTile, type MLTVectorTileLayer} from './vector_tile_mlt.ts';
+import {LOG_WORKER_TIMING, TileTimings, takePhases} from './worker_timing.ts';
 
 import type {Bucket, IndexedFeature, PopulateParameters} from '../data/bucket.ts';
 import type {IActor} from '../util/actor.ts';
@@ -73,6 +74,7 @@ export class WorkerTile {
      */
     async parse(data: VectorTileLike, layerIndex: StyleLayerIndex, availableImages: string[], actor: IActor, subdivisionGranularity: SubdivisionGranularitySetting): Promise<WorkerTileResult> {
         this.data = data;
+        const timings = new TileTimings();
 
         this.collisionBoxArray = new CollisionBoxArray();
         const sourceLayerCoder = new DictionaryCoder(Object.keys(data.layers).sort());
@@ -94,7 +96,9 @@ export class WorkerTile {
 
         const layerFamilies = layerIndex.familiesBySource[this.source];
         for (const sourceLayerId in layerFamilies) {
+            const accessStart = timings.now();
             const sourceLayer = data.layers[sourceLayerId];
+            timings.addSourceLayerAccess(accessStart);
             if (!sourceLayer) {
                 continue;
             }
@@ -106,6 +110,7 @@ export class WorkerTile {
 
             const sourceLayerIndex = sourceLayerCoder.encode(sourceLayerId);
             const mltLayer = isMLTVectorTileLayer(sourceLayer) ? sourceLayer : undefined;
+            const rowBuildStart = timings.now();
             const features = [];
             if (!mltLayer) {
                 for (let index = 0; index < sourceLayer.length; index++) {
@@ -114,6 +119,7 @@ export class WorkerTile {
                     features.push({feature, id, index, sourceLayerIndex});
                 }
             }
+            timings.addRowBuild(rowBuildStart);
             let mltRows: IndexedFeature[] | undefined;
             const trianglesOnly = holdsTrianglesOnly(mltLayer);
 
@@ -126,6 +132,7 @@ export class WorkerTile {
                 if (layer.isHidden(this.zoom, true)) continue;
                 recalculateLayers(family, this.zoom, availableImages);
 
+                const createStart = timings.now();
                 const bucket = layer.createBucket({
                     encoding: mltLayer ? 'mlt' : 'mvt',
                     index: featureIndex.bucketLayerIDs.length,
@@ -142,6 +149,8 @@ export class WorkerTile {
                     continue;
                 }
                 buckets[layer.id] = bucket;
+                const timing = timings.layer(layer.id, layer.type, sourceLayerId, sourceLayer.length, !!bucket.isColumnar);
+                timing.createBucket = timings.now() - createStart;
 
                 let populateFeatures: IndexedFeature[] | MLTVectorTileLayer = features;
                 if (mltLayer) {
@@ -149,7 +158,10 @@ export class WorkerTile {
                         mltLayer :
                         (mltRows ??= mltLayer.indexedFeatures((feature) => featureIndex.getId(feature, sourceLayerId), sourceLayerIndex));
                 }
+                const populateStart = timings.now();
                 bucket.populate(populateFeatures, options, this.tileID.canonical);
+                timing.populate = timings.now() - populateStart;
+                timing.phases = takePhases();
                 featureIndex.bucketLayerIDs.push(family.map((l) => l.id));
             }
         }
@@ -192,7 +204,10 @@ export class WorkerTile {
             getDashesPromise = actor.sendAsync({type: MessageType.getDashes, data: {dashes}}, abortController);
         }
 
+        const dependenciesStart = timings.now();
         const [glyphMap, iconMap, patternMap, dashPositions] = await Promise.all([getGlyphsPromise, getIconsPromise, getPatternsPromise, getDashesPromise]);
+
+        timings.addDependencies(dependenciesStart);
 
         const glyphAtlas = new GlyphAtlas(glyphMap);
         const imageAtlas = new ImageAtlas(iconMap, patternMap);
@@ -202,6 +217,7 @@ export class WorkerTile {
             if (!bucket.hasDependencies) continue;
 
             recalculateLayers(bucket.layers, this.zoom, availableImages);
+            const addFeaturesStart = timings.now();
             bucket.addFeatures({
                 options,
                 canonical: this.tileID.canonical,
@@ -214,7 +230,10 @@ export class WorkerTile {
                 dashPositions,
                 showCollisionBoxes: this.showCollisionBoxes
             });
+            timings.addFeatures(key, addFeaturesStart);
         }
+
+        if (LOG_WORKER_TIMING) timings.log(this.tileID.canonical.toString(), data instanceof MLTVectorTile ? 'mlt' : 'mvt');
 
         if (data instanceof MLTVectorTile) data.releaseDecodedColumns();
 
