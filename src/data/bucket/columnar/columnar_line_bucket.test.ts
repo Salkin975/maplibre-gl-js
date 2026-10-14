@@ -1,8 +1,10 @@
-import {describe, test, expect} from 'vitest';
+import {describe, test, expect, vi, afterEach} from 'vitest';
 import {encodeTile, decodeTile} from '@maplibre/mlt';
+import {GEOJSONVT_CLIP_END, GEOJSONVT_CLIP_START} from '@maplibre/geojson-vt';
+import {LineBucket} from '../line_bucket.ts';
 import {ColumnarLineBucket} from './columnar_line_bucket.ts';
 import {MLTVectorTileLayer} from '../../../source/vector_tile_mlt.ts';
-import {CANONICAL, LINE_BUCKETS, bucketParameters, createLineLayer, populateBoth, populateOptions, rowsOf} from '../../../util/test/columnar_bucket.ts';
+import {CANONICAL, LINE_BUCKETS, bucketParameters, bytes, createLineLayer, lineArrays, populateBoth, populateOptions, rowsOf} from '../../../util/test/columnar_bucket.ts';
 
 /** A zigzag with sharp and obtuse corners and a duplicate vertex, a straight line, a polygon. */
 function encodeFeatures(): Uint8Array {
@@ -18,6 +20,10 @@ function encodeFeatures(): Uint8Array {
 }
 
 describe('ColumnarLineBucket', () => {
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
     test('writes the same arrays and indexes the same features as LineBucket', () => {
         const {row, columnar} = populateBoth(LINE_BUCKETS, decodeTile(encodeFeatures())[0]);
 
@@ -56,6 +62,36 @@ describe('ColumnarLineBucket', () => {
 
         expect(columnar).toEqual(row);
         expect(columnar.indexed).toEqual([2, 1, 0]);
+    });
+
+    test('reads each selected feature once and hands the same object to the spatial index', () => {
+        const feature = vi.spyOn(MLTVectorTileLayer.prototype, 'feature');
+        const {options, insert} = populateOptions();
+        const bucket = new ColumnarLineBucket(bucketParameters(createLineLayer()));
+
+        bucket.populate(new MLTVectorTileLayer(decodeTile(encodeFeatures())[0]), options, CANONICAL);
+
+        expect(feature).toHaveBeenCalledTimes(3);
+        expect(insert.mock.calls.map(call => call[0])).toEqual(feature.mock.results.map(result => result.value));
+    });
+
+    test('reads the clips of a line that geojson-vt cut, like LineBucket', () => {
+        const table = decodeTile(encodeTile([{
+            name: 'roads',
+            extent: 4096,
+            features: [
+                {id: 1, geometry: {type: 'LineString', coordinates: [[0, 0], [1000, 0], [1000, 800]]}, properties: {[GEOJSONVT_CLIP_START]: 0.25, [GEOJSONVT_CLIP_END]: 0.75}}
+            ]
+        }]))[0];
+        const row = new LineBucket(bucketParameters(createLineLayer()));
+        row.populate(rowsOf(new MLTVectorTileLayer(table)), populateOptions().options, CANONICAL);
+        const columnar = new ColumnarLineBucket(bucketParameters(createLineLayer()));
+
+        columnar.populate(new MLTVectorTileLayer(table), populateOptions().options, CANONICAL);
+
+        expect(columnar.lineClipsArray).toEqual([{start: 0.25, end: 0.75}]);
+        expect(bytes(columnar.layoutVertexArray2)).toEqual(bytes(row.layoutVertexArray2));
+        expect(lineArrays(columnar)).toEqual(lineArrays(row));
     });
 
     test('populates from a row list through LineBucket when it is given one', () => {
