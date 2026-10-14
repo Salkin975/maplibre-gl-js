@@ -163,6 +163,7 @@
     "bench-e2e": "node test/bench/e2e/run.ts",
     "bench-e2e-styles": "node test/bench/e2e/styles.ts",
     "bench-e2e-builds": "node test/bench/e2e/builds.ts",
+    "bench-e2e-timings": "node test/bench/e2e/timings.ts",
     "prepare": "npm run codegen",
     "typecheck": "tsgo --noEmit && tsgo --project tsconfig.dist.json"
   },
