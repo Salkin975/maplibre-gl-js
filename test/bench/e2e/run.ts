@@ -9,26 +9,35 @@ import type * as MapLibreGL from '../../../dist/maplibre-gl';
 const PORT = 2900;
 const METRICS = ['bundleImport', 'styleLoad', 'firstTile', 'mapLoad', 'mapIdle'];
 
+/** One column of the result table: a library build, loaded with one style. */
 type Artifact = {
     url: string;
     origin: string;
     version?: string;
+    /** The style the map loads, or the bundled `basic-v9` when absent. */
+    styleUrl?: string;
     samples: Record<string, number[]>;
 };
 
-function resolveArtifact(spec: string): Artifact {
+function resolveArtifact(spec: string, styleUrl?: string): Artifact {
     const samples = Object.fromEntries(METRICS.map(m => [m, []]));
     if (spec === 'dist') {
-        return {url: `http://localhost:${PORT}/dist/maplibre-gl.mjs`, origin: 'dist', samples};
+        return {url: `http://localhost:${PORT}/dist/maplibre-gl.mjs`, origin: 'dist', styleUrl, samples};
     }
     if (spec === 'latest') {
-        return {url: 'https://unpkg.com/maplibre-gl@latest/dist/maplibre-gl.mjs', origin: 'unpkg', samples};
+        return {url: 'https://unpkg.com/maplibre-gl@latest/dist/maplibre-gl.mjs', origin: 'unpkg', styleUrl, samples};
     }
     if (spec.startsWith('http://') || spec.startsWith('https://')) {
-        return {url: spec, origin: new URL(spec).hostname, samples};
+        return {url: spec, origin: new URL(spec).hostname, styleUrl, samples};
     }
     const version = spec.replace(/^v/, '');
-    return {url: `https://unpkg.com/maplibre-gl@${version}/dist/maplibre-gl.mjs`, origin: 'unpkg', samples};
+    return {url: `https://unpkg.com/maplibre-gl@${version}/dist/maplibre-gl.mjs`, origin: 'unpkg', styleUrl, samples};
+}
+
+/** Names a style by the last two segments of its URL, e.g. `osm-bright/mlt`. */
+function styleLabel(styleUrl: string): string {
+    const segments = new URL(styleUrl).pathname.replace(/\.json$/, '').split('/').filter(Boolean);
+    return segments.slice(-2).join('/');
 }
 
 function createServer(): Promise<http.Server> {
@@ -49,13 +58,18 @@ function createServer(): Promise<http.Server> {
     return new Promise((resolve) => server.listen(PORT, () => resolve(server)));
 }
 
-function measureInPage(page: Page, bundleUrl: string): Promise<{version: string; metrics: Record<string, number>}> {
-    return page.evaluate(async (bundleUrl) => {
+type View = {center: [number, number]; zoom: number};
+
+/** The North Rhine-Westphalia extract that the `--style` tile sources serve, centred on Cologne. */
+const NRW_VIEW: View = {center: [6.96, 50.94], zoom: 10};
+
+function measureInPage(page: Page, bundleUrl: string, view: View, styleUrl?: string): Promise<{version: string; metrics: Record<string, number>}> {
+    return page.evaluate(async (bundleUrl, view, styleUrl) => {
         performance.mark('bundle-import-start');
         const maplibregl: typeof MapLibreGL = await import(bundleUrl);
         performance.mark('bundle-import-end');
 
-        const styleResponse = await fetch(`${location.origin}/styles/basic-v9.json`);
+        const styleResponse = await fetch(styleUrl ?? `${location.origin}/styles/basic-v9.json`);
         const styleText = await styleResponse.text();
         const style = JSON.parse(styleText.replaceAll('local://', `${location.origin}/`));
 
@@ -64,8 +78,8 @@ function measureInPage(page: Page, bundleUrl: string): Promise<{version: string;
         const map = new maplibregl.Map({
             container: 'map',
             style,
-            center: [0, 0],
-            zoom: 0
+            center: view.center,
+            zoom: view.zoom
         });
         map.on('style.load', () => performance.mark('style-load'));
         map.on('sourcedata', (e) => {
@@ -92,15 +106,15 @@ function measureInPage(page: Page, bundleUrl: string): Promise<{version: string;
         measureFrom('mapIdle', 'map-create', 'map-idle');
 
         return {version: maplibregl.getVersion(), metrics};
-    }, bundleUrl);
+    }, bundleUrl, view, styleUrl);
 }
 
-async function measureOnce(page: Page, artifact: Artifact): Promise<{version: string; metrics: Record<string, number>}> {
+async function measureOnce(page: Page, artifact: Artifact, view: View): Promise<{version: string; metrics: Record<string, number>}> {
     await page.goto(`http://localhost:${PORT}/e2e/index.html`, {waitUntil: 'load'});
     try {
         await page.addStyleTag({url: new URL('maplibre-gl.css', artifact.url).href});
         return await Promise.race([
-            measureInPage(page, artifact.url),
+            measureInPage(page, artifact.url, view, artifact.styleUrl),
             new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timed out after 60s')), 60_000)),
         ]);
     } catch (error) {
@@ -114,7 +128,7 @@ function trimmedMean(samples: number[]): number {
 }
 
 function formatTable(artifacts: Artifact[]): string {
-    const labels = artifacts.map(a => `${a.version} (${a.origin})`);
+    const labels = artifacts.map(a => `${a.version} (${a.origin})${a.styleUrl ? ` ${styleLabel(a.styleUrl)}` : ''}`);
     const rows = METRICS
         .filter(metric => artifacts.some(a => a.samples[metric].length > 0))
         .map((metric) => {
@@ -134,8 +148,17 @@ function formatTable(artifacts: Artifact[]): string {
 }
 
 async function main() {
-    const argv = minimist(process.argv.slice(2), {default: {runs: 8}});
-    const artifacts = (argv._.length > 0 ? argv._ : ['latest', 'dist']).map(String).map(resolveArtifact);
+    const argv = minimist(process.argv.slice(2), {default: {runs: 8}, string: ['style', 'center']});
+    const styleUrls: string[] = [argv.style].flat().filter(Boolean);
+    const [lng, lat] = argv.center ? String(argv.center).split(',').map(Number) : NRW_VIEW.center;
+    const view: View = styleUrls.length > 0 ?
+        {center: [lng, lat], zoom: Number(argv.zoom ?? NRW_VIEW.zoom)} :
+        {center: [0, 0], zoom: Number(argv.zoom ?? 0)};
+    const defaultSpecs = styleUrls.length > 0 ? ['dist'] : ['latest', 'dist'];
+    const specs = (argv._.length > 0 ? argv._ : defaultSpecs).map(String);
+    const artifacts = styleUrls.length > 0 ?
+        specs.flatMap(spec => styleUrls.map(styleUrl => resolveArtifact(spec, styleUrl))) :
+        specs.map(spec => resolveArtifact(spec));
     const runs = Number(argv.runs);
 
     const server = await createServer();
@@ -146,7 +169,7 @@ async function main() {
             await page.setViewport({width: 1280, height: 1024});
 
             for (let i = -1; i < runs; i++) {
-                const result = await measureOnce(page, artifact);
+                const result = await measureOnce(page, artifact, view);
                 artifact.version = result.version;
                 if (i >= 0) {
                     for (const metric of METRICS) {

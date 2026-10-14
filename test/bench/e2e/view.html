@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>MapLibre GL JS e2e benchmark viewer</title>
+    <link rel="stylesheet" href="../../../dist/maplibre-gl.css">
+    <link rel="icon" href="data:,">
+    <style>
+        body { margin: 0; }
+        #map { position: absolute; inset: 0; }
+        #styles { position: absolute; top: 8px; left: 8px; z-index: 1; background: #fffd; padding: 6px 8px; font: 13px sans-serif; }
+    </style>
+</head>
+<body>
+<div id="styles"></div>
+<div id="map"></div>
+<script type="module">
+    const VARIANTS = {
+        'mvt': {label: 'MVT', build: 'dist', style: 'mvt'},
+        'mlt-old': {label: 'MLT (old)', build: 'bench-builds/old', style: 'mlt'},
+        'mlt-new': {label: 'MLT (new)', build: 'dist', style: 'mlt'},
+        'mlt-new-pre-tess': {label: 'MLT (new, pre-tessellated)', build: 'dist', style: 'mlt-pre-tess'}
+    };
+    const params = new URLSearchParams(location.search);
+    const activeId = params.get('variant') ?? 'mlt-new-pre-tess';
+    const active = VARIANTS[activeId];
+    const maplibregl = await import(`../../../${active.build}/maplibre-gl.mjs`);
+
+    document.getElementById('styles').innerHTML = Object.entries(VARIANTS)
+        .map(([id, variant]) => id === activeId ? `<b>${variant.label}</b>` : `<a href="?variant=${id}">${variant.label}</a>`)
+        .join(' | ');
+
+    const [lng, lat] = (params.get('center') ?? '6.96,50.94').split(',').map(Number);
+    const map = new maplibregl.Map({
+        container: 'map',
+        style: `http://localhost:8080/style/osm-bright/${active.style}.json`,
+        center: [lng, lat],
+        zoom: Number(params.get('zoom') ?? 10),
+    });
+    map.showTileBoundaries = params.has('tiles');
+    window.map = map;
+</script>
+</body>
+</html>

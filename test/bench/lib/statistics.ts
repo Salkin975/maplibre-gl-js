@@ -31,7 +31,7 @@ export function summaryStatistics(data: number[]): Summary {
 
     // 20% trimmed mean
     const [lowerQuintile, upperQuintile] = [.2, .8].map(d => d3.quantile(sorted, d));
-    const trimmedMean = d3.mean(data.filter(d => d >= lowerQuintile && d <= upperQuintile));
+    const trimmedMean = d3.mean(data.filter(d => d >= lowerQuintile && d <= upperQuintile)) ?? mean;
     const windsorizedDeviation = d3.deviation(data.map(d =>
         d < lowerQuintile ? lowerQuintile :
             d > upperQuintile ? upperQuintile :
@@ -56,3 +56,84 @@ export function summaryStatistics(data: number[]): Summary {
 }
 
 
+
+/** One timed batch of a benchmark: `iterations` runs of the benchmarked operation took `time` ms in total. */
+export type Measurement = {
+    iterations: number;
+    time: number;
+};
+
+export type RegressionResults = {
+    correlation: number;
+    slope: number;
+    intercept: number;
+    data: Array<[number, number]>;
+};
+
+/**
+ * The probability that a random sample of `before` is slower (`inferior`) or faster (`superior`) than a
+ * random sample of `after`. Differences below the timer precision count as ties for both.
+ */
+export function probabilitiesOfSuperiority(before: number[], after: number[]): {superior: number; inferior: number} {
+    const timerPrecision = 0.005;
+
+    let superiorCount = 0;
+    let inferiorCount = 0;
+    let equalCount = 0;
+    let N = 0;
+    for (const b of before) {
+        for (const a of after) {
+            N++;
+            if (b - a > timerPrecision) superiorCount++;
+            else if (a - b > timerPrecision) inferiorCount++;
+            else equalCount++;
+        }
+    }
+
+    return {
+        superior: (superiorCount + equalCount) / N,
+        inferior: (inferiorCount + equalCount) / N
+    };
+}
+
+/**
+ * Fits time against iteration count over growing windows of measurements, so that the slope is the cost
+ * of one iteration with the fixed cost of a batch in the intercept.
+ */
+export function regression(measurements: Measurement[]): RegressionResults {
+    const result: Array<[number, number]> = [];
+    for (let i = 0, n = 1; i + n < measurements.length; i += n, n++) {
+        const subset = measurements.slice(i, i + n);
+        result.push([
+            subset.reduce((sum, measurement) => sum + measurement.iterations, 0),
+            subset.reduce((sum, measurement) => sum + measurement.time, 0)
+        ]);
+    }
+    return leastSquaresRegression(result);
+}
+
+function leastSquaresRegression(data: Array<[number, number]>): RegressionResults {
+    const meanX = d3.sum(data, d => d[0]) / data.length;
+    const meanY = d3.sum(data, d => d[1]) / data.length;
+    const varianceX = d3.variance(data, d => d[0]);
+    const sdX = Math.sqrt(varianceX);
+    const sdY = d3.deviation(data, d => d[1]);
+    const covariance = d3.sum(data, ([x, y]) => (x - meanX) * (y - meanY)) / (data.length - 1);
+
+    const correlation = covariance / sdX / sdY;
+    const slope = covariance / varianceX;
+    const intercept = meanY - slope * meanX;
+
+    return {correlation, slope, intercept, data};
+}
+
+/** Epanechnikov kernel density estimate of `samples` at `ticks`, with the rule-of-thumb bandwidth. */
+export function kde(samples: number[], summary: Summary, ticks: number[]): Array<[number, number]> {
+    if (samples.length === 0) return [];
+    const bandwidth = 1.06 * summary.windsorizedDeviation * Math.pow(samples.length, -0.2);
+    return ticks.map((x) => [x, d3.mean(samples, v => kernelEpanechnikov((x - v) / bandwidth)) / bandwidth]);
+}
+
+function kernelEpanechnikov(v: number): number {
+    return Math.abs(v) <= 1 ? 0.75 * (1 - v * v) : 0;
+}
