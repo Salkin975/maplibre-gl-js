@@ -1,8 +1,11 @@
 import Point from '@mapbox/point-geometry';
-import {type FeatureTable, type LayerBlock, createRowView, decodeTile, GEOMETRY_TYPE, GpuVector, scanLayerBlocks} from '@maplibre/mlt';
+import {type FeatureTable, type LayerBlock, createRowView, decodeTile, GEOMETRY_TYPE, GeometryVector, GpuVector, scanLayerBlocks} from '@maplibre/mlt';
 
 import type {VectorTileFeatureLike, VectorTileLayerLike, VectorTileLike} from '@maplibre/vt-pbf';
 import type {IndexedFeature} from '../data/bucket.ts';
+
+/** The geometry, part and ring offsets that tell which vertices belong to which feature. */
+type TopologyVector = GeometryVector['topologyVector'];
 
 /** Options for {@link MLTVectorTile}. */
 export type MLTVectorTileOptions = {
@@ -69,8 +72,8 @@ class MLTVectorTileFeature implements VectorTileFeatureLike {
     }
 
     /**
-     * Returns copies of the decoded points, because bucket code is free to modify them. A
-     * pre-tessellated layer without ring topology has no rings to decode, so its triangles stand in.
+     * Returns new points, which bucket code is free to modify. A pre-tessellated layer without ring
+     * topology has no rings to decode, so its triangles stand in.
      */
     loadGeometry(): Point[][] {
         const geometryVector = this.layer.featureTable.geometryVector;
@@ -78,27 +81,93 @@ class MLTVectorTileFeature implements VectorTileFeatureLike {
         if (geometryVector instanceof GpuVector && !hasRingTopology(geometryVector)) {
             return trianglesAsRings(geometryVector, this.index);
         }
-        const rings = geometryVector instanceof GpuVector ?
-            tessellatedLayerGeometries(geometryVector)[this.index] :
-            geometryVector.getGeometry(this.index);
-        return rings.map(ring => ring.map(point => new Point(point.x, point.y)));
+        if (geometryVector instanceof GeometryVector && geometryVector.vertexOffsets && geometryVector.mortonSettings) {
+            const rings = geometryVector.getGeometry(this.index);
+            return rings.map(ring => ring.map(point => new Point(point.x, point.y)));
+        }
+        return readGeometry(geometryVector, this.index);
     }
 }
 
-/** Caches {@link tessellatedLayerGeometries} per layer. */
-const tessellatedGeometries = new WeakMap<GpuVector, ReturnType<GpuVector['getGeometries']>>();
+/**
+ * Returns the vertices `[start, end)` of `vertexBuffer`, a flat list of x and y, as new points, read
+ * through `vertexOffsets` when the layer stores its vertices in a dictionary. A ring is closed by
+ * repeating its first point.
+ */
+function readVertices(vertexBuffer: Int32Array | Uint32Array, vertexOffsets: Uint32Array | undefined, start: number, end: number, closeRing: boolean): Point[] {
+    const count = end - start;
+    const closed = closeRing && count > 0;
+    const points = new Array<Point>(closed ? count + 1 : count);
+    for (let i = 0; i < count; i++) {
+        const offset = vertexOffsets ? vertexOffsets[start + i] * 2 : (start + i) * 2;
+        points[i] = new Point(vertexBuffer[offset], vertexBuffer[offset + 1]);
+    }
+    if (closed) points[count] = new Point(points[0].x, points[0].y);
+    return points;
+}
 
 /**
- * Returns the rings of every feature of a pre-tessellated layer. A `GpuVector` converts its features
- * only all at once, so the result is kept for the next feature that asks.
+ * Returns where the vertices of the parts `[start, end)` begin and end: through the ring offsets when
+ * the layer has rings, else through the part offsets, else the parts are single vertices.
  */
-function tessellatedLayerGeometries(geometryVector: GpuVector): ReturnType<GpuVector['getGeometries']> {
-    let geometries = tessellatedGeometries.get(geometryVector);
-    if (!geometries) {
-        geometries = geometryVector.getGeometries();
-        tessellatedGeometries.set(geometryVector, geometries);
+function vertexRange(topology: TopologyVector, start: number, end: number): [number, number] {
+    const {partOffsets, ringOffsets} = topology;
+    if (ringOffsets) return [ringOffsets[partOffsets?.[start] ?? start], ringOffsets[partOffsets?.[end] ?? end]];
+    if (partOffsets) return [partOffsets[start], partOffsets[end]];
+    return [start, end];
+}
+
+/** Returns every ring of the polygons `[start, end)`, each closed. */
+function readPolygonRings(vertexBuffer: Int32Array | Uint32Array, vertexOffsets: Uint32Array | undefined, topology: TopologyVector, start: number, end: number): Point[][] {
+    const {partOffsets, ringOffsets} = topology;
+    if (!partOffsets || !ringOffsets) throw new Error('Missing topology offsets for Polygon');
+
+    const rings: Point[][] = [];
+    for (let ring = partOffsets[start]; ring < partOffsets[end]; ring++) {
+        rings.push(readVertices(vertexBuffer, vertexOffsets, ringOffsets[ring], ringOffsets[ring + 1], true));
     }
-    return geometries;
+    return rings;
+}
+
+/**
+ * Reads the points, lines or rings of feature `index` from the vertex buffer of `geometryVector` straight
+ * into new points, with the coordinates `getGeometry()` returns. `getGeometry()` itself returns points of
+ * the MLT package's own `Point` class. The vertices must be stored as x and y pairs, not Morton codes.
+ */
+function readGeometry(geometryVector: GeometryVector | GpuVector, index: number): Point[][] {
+    const vertexBuffer = geometryVector.vertexBuffer;
+    const vertexOffsets = geometryVector instanceof GeometryVector ? geometryVector.vertexOffsets : undefined;
+    const topology: TopologyVector = geometryVector.topologyVector ?? {};
+    const rootStart = topology.geometryOffsets?.[index] ?? index;
+    const rootEnd = topology.geometryOffsets?.[index + 1] ?? index + 1;
+
+    switch (geometryVector.geometryType(index)) {
+        case GEOMETRY_TYPE.POINT: {
+            const [start] = vertexRange(topology, rootStart, rootEnd);
+            return [readVertices(vertexBuffer, vertexOffsets, start, start + 1, false)];
+        }
+        case GEOMETRY_TYPE.MULTIPOINT: {
+            const [start, end] = vertexRange(topology, rootStart, rootEnd);
+            return readVertices(vertexBuffer, vertexOffsets, start, end, false).map(point => [point]);
+        }
+        case GEOMETRY_TYPE.LINESTRING: {
+            const [start, end] = vertexRange(topology, rootStart, rootEnd);
+            return [readVertices(vertexBuffer, vertexOffsets, start, end, false)];
+        }
+        case GEOMETRY_TYPE.MULTILINESTRING: {
+            const lines: Point[][] = [];
+            for (let line = rootStart; line < rootEnd; line++) {
+                const [start, end] = vertexRange(topology, line, line + 1);
+                lines.push(readVertices(vertexBuffer, vertexOffsets, start, end, false));
+            }
+            return lines;
+        }
+        case GEOMETRY_TYPE.POLYGON:
+        case GEOMETRY_TYPE.MULTIPOLYGON:
+            return readPolygonRings(vertexBuffer, vertexOffsets, topology, rootStart, rootEnd);
+        default:
+            throw new Error(`The geometry type ${geometryVector.geometryType(index)} is not supported.`);
+    }
 }
 
 /**
