@@ -49,11 +49,32 @@ export function selectColumnarFeatures(
     const isPolygonOnly = geometryVector instanceof GpuVector && renderableGeometryTypes.includes(SINGLE_PART_GEOMETRY_TYPE.POLYGON);
     if (isPolygonOnly) return filterSelection;
 
-    const geometrySelection = unionSelectionVectors(
-        renderableGeometryTypes.map(type => geometryVector.filter(type)),
-        featureTable.numFeatures,
-    );
-    return intersectSelectionVectors(filterSelection, geometrySelection);
+    return intersectSelectionVectors(filterSelection, selectGeometryTypes(geometryVector, renderableGeometryTypes, featureTable.numFeatures));
+}
+
+/**
+ * The features of each set of geometry types, per geometry vector, keyed by the types joined with
+ * commas. Every line layer of a source layer asks for the same set, and finding it is a scan over all
+ * features of the table. Keying by the geometry vector rather than the table starts over once the table
+ * has released its columns and decoded them again.
+ */
+const geometryTypeSelections = new WeakMap<FeatureTable['geometryVector'], Map<string, SelectionVector>>();
+
+/** Returns the features of `geometryVector` whose geometry is one of `types`, scanning for each set of types only once. */
+function selectGeometryTypes(geometryVector: FeatureTable['geometryVector'], types: SINGLE_PART_GEOMETRY_TYPE[], numFeatures: number): SelectionVector {
+    let selections = geometryTypeSelections.get(geometryVector);
+    if (!selections) {
+        selections = new Map();
+        geometryTypeSelections.set(geometryVector, selections);
+    }
+
+    const key = types.join(',');
+    let selection = selections.get(key);
+    if (!selection) {
+        selection = unionSelectionVectors(types.map(type => geometryVector.filter(type)), numFeatures);
+        selections.set(key, selection);
+    }
+    return selection;
 }
 
 /** Degrades to an empty geometry and warns instead of aborting the whole tile over one bad feature. */

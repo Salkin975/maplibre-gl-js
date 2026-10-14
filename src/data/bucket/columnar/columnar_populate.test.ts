@@ -64,6 +64,19 @@ describe('selectColumnarFeatures', () => {
         expect(indices(selectColumnarFeatures(table, undefined, 5, [SINGLE_PART_GEOMETRY_TYPE.POINT]))).toEqual([0]);
     });
 
+    test('scans a table for a set of geometry types once, however many layers ask for it', () => {
+        const table = decodeMixedLayer();
+        const filter = vi.spyOn(table.geometryVector, 'filter');
+        const lineTypes = [SINGLE_PART_GEOMETRY_TYPE.LINESTRING, SINGLE_PART_GEOMETRY_TYPE.POLYGON];
+
+        expect(indices(selectColumnarFeatures(table, classIsA, 5, lineTypes))).toEqual([1, 3]);
+        expect(indices(selectColumnarFeatures(table, ['==', 'class', 'b'], 5, lineTypes))).toEqual([2]);
+        expect(filter).toHaveBeenCalledTimes(2);
+
+        expect(indices(selectColumnarFeatures(table, classIsA, 5, [SINGLE_PART_GEOMETRY_TYPE.POLYGON]))).toEqual([3]);
+        expect(filter).toHaveBeenCalledTimes(3);
+    });
+
     test('selects every polygon of a pre-tessellated layer without asking its geometry vector', () => {
         const file = path.join(__dirname, '../../../../test/integration/assets/tiles/mlt/5/22/12.mlt');
         const table = decodeTile(new Uint8Array(readFileSync(file))).find(t => t.geometryVector instanceof GpuVector);
