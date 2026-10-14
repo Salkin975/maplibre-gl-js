@@ -104,3 +104,54 @@ npm run bench-e2e -- 6.0.0 dist --runs 16
 ```
 
 Columns are labeled by each artifact's own reported version. With exactly two artifacts the table adds a delta column. Artifacts run sequentially on one machine, and the same-session noise caveat from micro benchmarks applies here unchanged.
+
+### Style and tile format comparison
+
+`npm run bench-e2e-styles` compares MVT and MLT tiles across two builds of the library at eight locations in North Rhine-Westphalia. It needs the tile and style server on `localhost:8080`, which serves `osm-bright/mvt.json`, `mlt.json` and `mlt-pre-tess.json`.
+
+| Column | Build | Style |
+| --- | --- | --- |
+| MVT | new | `mvt.json` |
+| MLT (old) | old | `mlt.json` |
+| MLT (new) | new | `mlt.json` |
+| MLT (new, pre-tessellated) | new | `mlt-pre-tess.json` |
+
+Each variant is measured with four benchmarks per location:
+
+* **Layout: cold load to idle** is the time from creating a map with an empty tile cache to its first idle.
+* **Layout: worker busy time** is the time the workers spend running during that load, sampled with the DevTools profiler. It is the figure closest to the cost of parsing and bucket building, because it leaves out the tile server.
+* **Layout: mean tile load time** is the mean time from a tile's request to its arrival.
+* **Paint: repaint time** is the time of one render of an idle map, including the GPU work.
+
+The new build is `dist`, and the old build is read from `bench-builds/old`. Build the old one from `main` in a separate worktree so that your branch stays untouched:
+
+```bash
+git worktree add ../maplibre-gl-js-main main
+cd ../maplibre-gl-js-main
+npm run generate-style-code && npm run generate-unicode-data && npm run generate-struct-arrays && npm run generate-shaders && npm run build-prod
+cp dist/*.mjs ../maplibre-gl-js/bench-builds/old/
+```
+
+Then build the branch under test with `npm run build-prod` and run:
+
+```bash
+npm run bench-e2e-styles -- --iterations 20
+```
+
+### Run it in the browser
+
+Open the page through the dev server (`npm run start-server`, port 9966). It runs the benchmarks when it loads and fills in the results as they finish:
+
+```
+http://localhost:9966/test/bench/e2e/benchmarks.html
+```
+
+The page measures the built bundles, not the sources: `dist/maplibre-gl.mjs` for the new build and `bench-builds/old/maplibre-gl.mjs` for the old one. Run `npm run build-prod` after changing the code under test. `?new=` and `?old=` take another bundle URL, such as `?new=/dist/maplibre-gl-dev.mjs` for the build that `npm start` rebuilds, which is slower and not suited for timing.
+
+Keep the tab in the foreground while it runs, since a hidden tab stops the map from rendering. The query parameters `iterations` (cold loads per variant and location, default 5; the page also has a field for it), `paint` (timed repaint batches, default 210), `memory` (cold loads sampled for memory, default 5) and `locations` (the first N locations) shorten a run, for example `?iterations=3&paint=30&locations=1&memory=2`. `baseline` chooses the variant the others are compared against. `types` (for example `?types=layout,paint`) chooses which of the three benchmarks run: `layout`, `paint` and `memory`, all of them by default. The page has a checkbox for each, and "Run again" applies them.
+
+The memory benchmark samples the JS heap of the page and of its workers every 25 ms, and it cannot see off-heap array buffers. Start Chrome with `--js-flags=--expose-gc --enable-precise-memory-info` so that the page can collect garbage before each load and read exact sizes. The page has no worker busy time, because the profiler is only reachable from the command line runner.
+
+### Run it from the command line
+
+`npm run bench-e2e-styles -- --iterations 20` runs the same variants and locations in headless Chrome and adds the worker busy time. `--iterations` is the number of cold loads per variant and location, `--paint-measurements` the number of timed repaint batches (default 210), `--locations N` limits the run to the first N locations, and `--old-dist` and `--new-dist` choose the build directories. The results are written to `bench-results/styles-latest.json` and shown by the page with `?file=/bench-results/styles-latest.json`.
