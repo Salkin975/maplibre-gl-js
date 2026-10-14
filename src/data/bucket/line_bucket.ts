@@ -14,6 +14,7 @@ import {toEvaluationFeature} from '../evaluation_feature.ts';
 import {EvaluationParameters} from '../../style/evaluation_parameters.ts';
 import {subdivideVertexLine} from '../../render/subdivision.ts';
 import {clamp} from '../../util/util.ts';
+import {addPhase} from '../../source/worker_timing.ts';
 
 import type {CanonicalTileID} from '../../tile/tile_id.ts';
 import type {
@@ -168,6 +169,7 @@ export class LineBucket implements Bucket {
         const sortFeaturesByKey = !lineSortKey.isConstant();
         const bucketFeatures: BucketFeature[] = [];
 
+        const selectMaterializeStart = performance.now();
         const globalProperties = new EvaluationParameters(this.zoom);
         const needGeometry = this.layers[0]._featureFilter.needGeometry;
         for (const {feature, id, index, sourceLayerIndex} of features) {
@@ -193,6 +195,7 @@ export class LineBucket implements Bucket {
 
             bucketFeatures.push(bucketFeature);
         }
+        addPhase('selectMaterialize', selectMaterializeStart);
 
         this.addBucketFeatures(bucketFeatures, index => features[index].feature, options, canonical);
     }
@@ -216,6 +219,7 @@ export class LineBucket implements Bucket {
         for (const bucketFeature of bucketFeatures) {
             const {geometry, index, sourceLayerIndex} = bucketFeature;
 
+            const writeStart = performance.now();
             if (this.hasDependencies) {
                 if (hasPattern('line', this.layers, options)) {
                     addPatternDependencies('line', this.layers, bucketFeature, {zoom: this.zoom}, options);
@@ -229,8 +233,11 @@ export class LineBucket implements Bucket {
             } else {
                 this.addFeature(bucketFeature, geometry, index, canonical, {}, {}, options.subdivisionGranularity);
             }
+            addPhase('write', writeStart);
 
+            const indexStart = performance.now();
             options.featureIndex.insert(featureAt(index), geometry, index, sourceLayerIndex, this.index);
+            addPhase('featureIndex', indexStart);
         }
     }
 

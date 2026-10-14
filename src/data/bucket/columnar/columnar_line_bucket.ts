@@ -3,6 +3,7 @@ import {LineBucket} from '../line_bucket.ts';
 import {warnOnce} from '../../../util/util.ts';
 import {register} from '../../../util/web_worker_transfer.ts';
 import {hasRingTopology} from '../../../source/vector_tile_mlt.ts';
+import {addPhase} from '../../../source/worker_timing.ts';
 import {selectColumnarFeatures, materializeSelectedFeatures, isRowFeatureList, columnarTransferOmitList} from './columnar_populate.ts';
 
 import type {CanonicalTileID} from '../../../tile/tile_id.ts';
@@ -43,6 +44,7 @@ export class ColumnarLineBucket extends LineBucket {
         }
 
         const lineSortKey = layer.layout.get('line-sort-key');
+        const selectStart = performance.now();
         const selection = selectColumnarFeatures(featureTable, layer.filter, this.zoom, [
             SINGLE_PART_GEOMETRY_TYPE.LINESTRING,
             SINGLE_PART_GEOMETRY_TYPE.POLYGON,
@@ -51,6 +53,7 @@ export class ColumnarLineBucket extends LineBucket {
             hasDashes: true,
             sortKey: lineSortKey.isConstant() ? undefined : (bucketFeature) => lineSortKey.evaluate(bucketFeature, {}, canonical),
         });
+        addPhase('selectMaterialize', selectStart);
 
         this.addBucketFeatures(bucketFeatures, index => sourceLayer.feature(index), options, canonical);
     }
