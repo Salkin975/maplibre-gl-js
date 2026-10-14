@@ -1,5 +1,7 @@
 import {describe, test, expect, vi, afterEach} from 'vitest';
-import {decodeTile, encodeTile, SINGLE_PART_GEOMETRY_TYPE, type FeatureTable, type SelectionVector} from '@maplibre/mlt';
+import {readFileSync} from 'fs';
+import path from 'path';
+import {decodeTile, encodeTile, GpuVector, SINGLE_PART_GEOMETRY_TYPE, type FeatureTable, type SelectionVector} from '@maplibre/mlt';
 import {MLTVectorTileLayer} from '../../../source/vector_tile_mlt.ts';
 import {FeatureIndex} from '../../feature_index.ts';
 import {OverscaledTileID} from '../../../tile/tile_id.ts';
@@ -70,6 +72,17 @@ describe('selectColumnarFeatures', () => {
         expect(indices(selectColumnarFeatures(table, undefined, 5, [SINGLE_PART_GEOMETRY_TYPE.POINT]))).toEqual([0]);
     });
 
+    test('selects every polygon of a pre-tessellated layer without asking its geometry vector', () => {
+        const file = path.join(__dirname, '../../../../test/integration/assets/tiles/mlt/5/22/12.mlt');
+        const table = decodeTile(new Uint8Array(readFileSync(file))).find(t => t.geometryVector instanceof GpuVector);
+        const filter = vi.spyOn(table.geometryVector, 'filter');
+
+        const selection = selectColumnarFeatures(table, undefined, 5, [SINGLE_PART_GEOMETRY_TYPE.POLYGON]);
+
+        expect(indices(selection)).toEqual(Array.from({length: table.numFeatures}, (_, i) => i));
+        expect(filter).not.toHaveBeenCalled();
+    });
+
     test('throws when the filter cannot be planned, since the dispatch should have caught it', () => {
         const unsupported = ['within', {type: 'Polygon', coordinates: [[[0, 0], [1, 0], [1, 1], [0, 0]]]}] as FilterSpecification;
 
@@ -93,6 +106,19 @@ describe('materializeSelectedFeatures', () => {
         expect(features[0].geometry[0]).toHaveLength(5);
         expect(features[0].geometry[0][0]).toMatchObject({x: 40, y: 40});
         expect(features[0].dashes).toBeUndefined();
+    });
+
+    test('stores each source feature under its index when asked, so that the bucket can reuse it', () => {
+        const layer = new MLTVectorTileLayer(decodeMixedLayer());
+        const feature = vi.spyOn(layer, 'feature');
+        const selection = selectColumnarFeatures(layer.featureTable, classIsA, 5);
+        const sourceFeatures: VectorTileFeatureLike[] = [];
+
+        materializeSelectedFeatures(layer, selection, 0, createFeatureIndex(), {features: sourceFeatures});
+
+        expect(feature).toHaveBeenCalledTimes(3);
+        expect([0, 1, 3].map(index => sourceFeatures[index].id)).toEqual([10, 11, 13]);
+        expect(sourceFeatures[2]).toBeUndefined();
     });
 
     test('takes the id from the promoteId of the source', () => {

@@ -134,6 +134,18 @@ describe('ColumnarFillBucket on ring-encoded polygons', () => {
         expect(columnar.indexed).toEqual([2, 1, 0]);
     });
 
+    test('reads each selected feature once and hands the same object to the spatial index', () => {
+        const feature = vi.spyOn(MLTVectorTileLayer.prototype, 'feature');
+        const table = decodeTile(encodePolygons())[0];
+        const {options, insert} = populateOptions();
+        const bucket = new ColumnarFillBucket(bucketParameters(createLayer()));
+
+        bucket.populate(table, options, CANONICAL);
+
+        expect(feature).toHaveBeenCalledTimes(3);
+        expect(insert.mock.calls.map(call => call[0])).toEqual(feature.mock.results.map(result => result.value));
+    });
+
     test('populates from a row list through FillBucket when it is given one', () => {
         const table = decodeTile(encodePolygons())[0];
         const sourceLayer = new MLTVectorTileLayer(table);
