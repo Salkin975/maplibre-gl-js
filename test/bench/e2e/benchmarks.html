@@ -1,0 +1,794 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>MapLibre GL JS Benchmarks</title>
+    <link rel="icon" href="data:,">
+    <style>
+        body { margin: 0; background: #fff; color: #1c2024; font: 14px/1.5 system-ui, sans-serif; }
+        main { max-width: 1000px; margin: 0 auto; padding: 24px 16px 64px; }
+        h1 { font-size: 24px; margin: 0 0 4px; }
+        h2 { font-size: 16px; margin: 0; }
+        h2 a { color: #1c2024; }
+        #status { color: #5b6570; margin: 0 0 8px; min-height: 1.5em; }
+        #tools { display: flex; flex-wrap: wrap; gap: 8px 24px; align-items: center; margin-bottom: 24px; color: #5b6570; }
+        select, input, button { font: inherit; padding: 3px 6px; }
+        input[type="text"] { width: 3.5em; text-align: right; }
+        input[type="checkbox"] { padding: 0; }
+        section.bench { margin-bottom: 40px; break-inside: avoid; }
+        table { width: 100%; border-collapse: collapse; table-layout: fixed; margin-bottom: 8px; }
+        th, td { text-align: left; padding: 6px 8px 6px 0; vertical-align: top; }
+        th.version { font-weight: 600; }
+        tr.location th { color: #1287a8; font-weight: 600; }
+        tbody th { width: 22%; font-weight: 600; }
+        p.note { color: #5b6570; font-size: 12px; margin: 4px 0 0; }
+        .change { color: #5b6570; display: block; font-size: 12px; }
+        .change.strong { color: #b42318; font-weight: 600; }
+        .change.better { color: #0a7d52; font-weight: 600; }
+        .fit { color: #b26a00; font-size: 12px; }
+        .quiet { color: #5b6570; }
+        .state { color: #5b6570; }
+        .error { color: #b42318; }
+        p.chance { text-align: center; margin: 4px 0; }
+        p.chance.strong { font-weight: 600; }
+        p.chance svg { vertical-align: baseline; }
+        svg.plot { display: block; width: 100%; height: auto; overflow: visible; margin-top: 8px; }
+        #download { display: none; }
+        @media print { #tools { display: none; } }
+    </style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+        <g id="up-arrow"><path transform="translate(-6, -2)" style="stroke: inherit; fill: inherit" d="M2,10 L6,2 L10,10"></path></g>
+    </defs>
+</svg>
+<main>
+    <h1>MapLibre GL JS Benchmarks <span id="state"></span></h1>
+    <p id="status"></p>
+    <div id="tools">
+        <label>Runs <input id="runs" type="text" inputmode="numeric" size="3" aria-label="Runs per variant and location"></label>
+        <span role="group" aria-label="Benchmarks to run">
+            <label><input id="type-layout" type="checkbox" data-type="layout"> Layout</label>
+            <label><input id="type-paint" type="checkbox" data-type="paint"> Paint</label>
+            <label><input id="type-memory" type="checkbox" data-type="memory"> Memory</label>
+        </span>
+        <button id="rerun" type="button">Run again</button>
+        <label>Compare against <select id="baseline"></select></label>
+        <a id="download">Download results (JSON)</a>
+    </div>
+    <div id="benchmarks"></div>
+</main>
+<script src="/node_modules/d3/dist/d3.min.js"></script>
+<script type="module">
+    const STYLE_BASE = 'http://localhost:8080/style/osm-bright';
+    const COLORS = ['#1b9e77', '#d95f02', '#7570b3', '#e7298a'];
+
+    /** A build of the library loaded with one style; `old` and `new` are the two build bundles. */
+    const VARIANTS = [
+        {id: 'mvt', label: 'MVT', build: 'new', styleUrl: `${STYLE_BASE}/mvt.json`},
+        {id: 'mlt-old', label: 'MLT (old)', build: 'old', styleUrl: `${STYLE_BASE}/mlt.json`},
+        {id: 'mlt-new', label: 'MLT (new)', build: 'new', styleUrl: `${STYLE_BASE}/mlt.json`},
+        {id: 'mlt-new-pre-tess', label: 'MLT (new, pre-tessellated)', build: 'new', styleUrl: `${STYLE_BASE}/mlt-pre-tess.json`}
+    ];
+
+    const METRICS = [
+        {id: 'layout-cold-load', label: 'Layout: cold load to idle', unit: 'ms'},
+        {id: 'layout-tile-load', label: 'Layout: mean tile load time', unit: 'ms'},
+        {id: 'paint', label: 'Paint: repaint time', unit: 'ms'},
+        {id: 'memory', label: 'Memory: JS heap growth over a cold load', unit: 'MB'}
+    ];
+
+    /**
+     * Explains what the memory plot measures and, when the page cannot collect garbage before a load, why its
+     * baselines are noisy.
+     */
+    function memoryNote() {
+        const measured = 'Main-thread and worker JS heap, sampled every 25 ms while the workers are idle between tasks. Off-heap array buffers are not included.';
+        const flags = window.gc ? '' : ' The page cannot collect garbage before a load, so baselines are noisy: start Chrome with --js-flags=--expose-gc --enable-precise-memory-info.';
+        return measured + flags;
+    }
+
+    /** North Rhine-Westphalia, which is the extent the tile sources serve. */
+    const LOCATIONS = [
+        {name: 'Cologne, dense urban, z8', zoom: 8, center: [6.96, 50.94]},
+        {name: 'Cologne, dense urban, z10', zoom: 10, center: [6.96, 50.94]},
+        {name: 'Cologne, dense urban, z12', zoom: 12, center: [6.96, 50.94]},
+        {name: 'Cologne, dense urban, z14 (max)', zoom: 14, center: [6.96, 50.94]},
+        {name: 'Eifel, sparse rural, z10', zoom: 10, center: [6.4, 50.55]},
+        {name: 'Eifel, sparse rural, z12', zoom: 12, center: [6.4, 50.55]},
+        {name: 'Ruhr area, polycentric, z9', zoom: 9, center: [7.2, 51.5]},
+        {name: 'Sauerland, mountainous, z11', zoom: 11, center: [8.4, 51.15]}
+    ];
+
+    const params = new URLSearchParams(location.search);
+    const formatSample = d3.format('.3r');
+    /** The benchmark types a run can include, and the metrics each one fills in. */
+    const TYPES = {
+        layout: ['layout-cold-load', 'layout-tile-load'],
+        paint: ['paint'],
+        memory: ['memory']
+    };
+
+    /** The types to run: those named in the address as `types=layout,paint`, or all of them. */
+    function typesFromParameters() {
+        const named = (params.get('types') ?? '').split(',').filter(type => type in TYPES);
+        return new Set(named.length > 0 ? named : Object.keys(TYPES));
+    }
+
+    const state = {variants: VARIANTS, metrics: METRICS, baseline: params.get('baseline') ?? 'mlt-old', cards: []};
+
+    /* ---------------------------------------------------------------- statistics */
+
+    function summaryStatistics(data) {
+        const variance = d3.variance(data);
+        const sorted = data.slice().sort(d3.ascending);
+        const [q1, q2, q3] = [0.25, 0.5, 0.75].map(d => d3.quantile(sorted, d));
+        let min = [NaN, Infinity];
+        let max = [NaN, -Infinity];
+        data.forEach((s, i) => {
+            if (s < min[1]) min = [i, s];
+            if (s > max[1]) max = [i, s];
+        });
+        const [lower, upper] = [0.2, 0.8].map(d => d3.quantile(sorted, d));
+        return {
+            mean: d3.mean(sorted),
+            trimmedMean: d3.mean(data.filter(d => d >= lower && d <= upper)) ?? d3.mean(sorted),
+            variance,
+            deviation: Math.sqrt(variance),
+            windsorizedDeviation: d3.deviation(data.map(d => Math.min(Math.max(d, lower), upper))),
+            q1, q2, q3, iqr: q3 - q1,
+            argmin: min[0], min: min[1], argmax: max[0], max: max[1]
+        };
+    }
+
+    function regression(measurements) {
+        const data = [];
+        for (let i = 0, n = 1; i + n < measurements.length; i += n, n++) {
+            const subset = measurements.slice(i, i + n);
+            data.push([d3.sum(subset, m => m.iterations), d3.sum(subset, m => m.time)]);
+        }
+        const meanX = d3.sum(data, d => d[0]) / data.length;
+        const meanY = d3.sum(data, d => d[1]) / data.length;
+        const varianceX = d3.variance(data, d => d[0]);
+        const covariance = d3.sum(data, ([x, y]) => (x - meanX) * (y - meanY)) / (data.length - 1);
+        const slope = covariance / varianceX;
+        return {correlation: covariance / Math.sqrt(varianceX) / d3.deviation(data, d => d[1]), slope, intercept: meanY - slope * meanX, data};
+    }
+
+    function kde(samples, summary, ticks) {
+        if (samples.length === 0) return [];
+        const kernel = v => Math.abs(v) <= 1 ? 0.75 * (1 - v * v) : 0;
+        const bandwidth = 1.06 * summary.windsorizedDeviation * Math.pow(samples.length, -0.2);
+        return ticks.map(x => [x, d3.mean(samples, v => kernel((x - v) / bandwidth)) / bandwidth]);
+    }
+
+    function probabilitiesOfSuperiority(before, after) {
+        const precision = 0.005;
+        let superior = 0, inferior = 0, equal = 0, n = 0;
+        for (const b of before) {
+            for (const a of after) {
+                n++;
+                if (b - a > precision) superior++;
+                else if (a - b > precision) inferior++;
+                else equal++;
+            }
+        }
+        return {superior: (superior + equal) / n, inferior: (inferior + equal) / n};
+    }
+
+    function summarise(samples, measurements) {
+        if (samples.length < 2) return {error: 'too few samples'};
+        return {samples, summary: summaryStatistics(samples), regression: measurements && measurements.length > 3 ? regression(measurements) : undefined};
+    }
+
+    /* ---------------------------------------------------------------- measuring */
+
+    const workerHeaps = new Map();
+
+    /**
+     * Wraps `Worker` so that every worker the libraries start also reports its JS heap on a timer. The
+     * reports are consumed here and never reach the library, which would ignore them anyway.
+     */
+    function installWorkerHeapReporter() {
+        const NativeWorker = window.Worker;
+        window.Worker = class extends NativeWorker {
+            constructor(url, options) {
+                const source = `import ${JSON.stringify(new URL(url, location.href).href)};\n` +
+                    'setInterval(() => postMessage({workerHeap: performance.memory ? performance.memory.usedJSHeapSize : null}), 25);\n' +
+                    "addEventListener('message', (e) => { if (e.data && e.data.collectGarbage && self.gc) self.gc(); });";
+                const blobUrl = URL.createObjectURL(new Blob([source], {type: 'text/javascript'}));
+                super(blobUrl, options);
+                URL.revokeObjectURL(blobUrl);
+                this.addEventListener('message', (e) => {
+                    if (!e.data || !('workerHeap' in e.data)) return;
+                    workerHeaps.set(this, e.data.workerHeap);
+                    e.stopImmediatePropagation();
+                });
+            }
+        };
+    }
+
+    /** The JS heap of the page and of all its workers, in bytes. */
+    function heapNow() {
+        return performance.memory.usedJSHeapSize + d3.sum([...workerHeaps.values()], v => v ?? 0);
+    }
+
+    function sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    /** Collects garbage in the page and its workers when the browser exposes `gc`, then lets the heaps settle. */
+    async function collectGarbage() {
+        window.gc?.();
+        for (const worker of workerHeaps.keys()) worker.postMessage({collectGarbage: true});
+        await sleep(300);
+    }
+
+    const mapContainer = document.createElement('div');
+    mapContainer.style.cssText = 'position:fixed;left:-10000px;top:0;width:1024px;height:768px';
+    document.body.appendChild(mapContainer);
+
+    /**
+     * Loads each build once and keeps a hidden map alive in it, so that the worker pool survives
+     * the maps that are measured.
+     */
+    async function loadBuilds() {
+        const urls = {old: params.get('old') ?? '/bench-builds/old/maplibre-gl.mjs', new: params.get('new') ?? '/dist/maplibre-gl.mjs'};
+        const libs = {};
+        for (const [build, url] of Object.entries(urls)) {
+            libs[build] = await import(url);
+            const keepAlive = document.createElement('div');
+            keepAlive.style.cssText = 'position:fixed;left:-10000px;width:16px;height:16px';
+            document.body.appendChild(keepAlive);
+            new libs[build].Map({container: keepAlive, style: {version: 8, sources: {}, layers: []}});
+        }
+        return libs;
+    }
+
+    async function loadStyles() {
+        const styles = {};
+        for (const variant of VARIANTS) styles[variant.id] = await (await fetch(variant.styleUrl)).json();
+        return styles;
+    }
+
+    function createMap(lib, style, location) {
+        return new lib.Map({container: mapContainer, style: structuredClone(style), center: location.center, zoom: location.zoom});
+    }
+
+    /** Cold-loads a fresh map; reports the time to idle and the mean time from a tile's request to its arrival. */
+    async function layoutIteration(lib, style, location) {
+        const starts = new Map();
+        const tileLoadTimes = [];
+        const tileKey = e => `${e.sourceId}/${e.tile.tileID.key}`;
+
+        const start = performance.now();
+        const map = createMap(lib, style, location);
+        map.on('dataloading', (e) => {
+            if (e.tile) starts.set(tileKey(e), performance.now());
+        });
+        map.on('data', (e) => {
+            if (!e.tile || e.tile.state !== 'loaded' || !starts.has(tileKey(e))) return;
+            tileLoadTimes.push(performance.now() - starts.get(tileKey(e)));
+            starts.delete(tileKey(e));
+        });
+        await new Promise(resolve => map.once('idle', resolve));
+        const coldLoad = performance.now() - start;
+        map.remove();
+        return {coldLoad, tileLoad: tileLoadTimes.length > 0 ? d3.mean(tileLoadTimes) : null};
+    }
+
+    /**
+     * Cold-loads a fresh map and samples the JS heap while it loads and for `settleMs` after it is idle.
+     * Returns the growth over the heap before the map was created, in megabytes against milliseconds.
+     */
+    async function memoryIteration(lib, style, location, settleMs) {
+        await collectGarbage();
+        const baseline = heapNow();
+        const series = [[0, 0]];
+        const start = performance.now();
+        const timer = setInterval(() => series.push([performance.now() - start, (heapNow() - baseline) / 1048576]), 25);
+        const map = createMap(lib, style, location);
+        await new Promise(resolve => map.once('idle', resolve));
+        const idleAt = performance.now() - start;
+        await sleep(settleMs);
+        clearInterval(timer);
+        map.remove();
+        return {series, idleAt, peak: d3.max(series, d => d[1])};
+    }
+
+    /** Repaints an idle map in growing batches until a batch is long enough to time. */
+    async function paintMeasurements(lib, style, location, minimumMeasurements) {
+        const map = createMap(lib, style, location);
+        await new Promise(resolve => map.once('idle', resolve));
+        const gl = map.painter.context.gl;
+        const pixel = new Uint8Array(4);
+        function render() {
+            map._styleDirty = true;
+            map._sourcesDirty = true;
+            map._render();
+            gl.finish();
+            gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+        }
+
+        const measurements = [];
+        let iterations = 1;
+        let elapsed = 0;
+        render();
+        while (elapsed < 500 || measurements.length <= minimumMeasurements) {
+            const start = performance.now();
+            for (let i = 0; i < iterations; i++) render();
+            const time = performance.now() - start;
+            elapsed += time;
+            if (time >= 20) measurements.push({time, iterations});
+            else iterations = Math.floor((iterations + 1) * 1.2);
+            if (measurements.length % 10 === 0) await new Promise(resolve => setTimeout(resolve));
+        }
+        map.remove();
+        return measurements;
+    }
+
+    function setStatus(text) {
+        document.getElementById('status').textContent = text;
+    }
+
+    function cardFor(metricId, location) {
+        return state.cards.find(card => card.metric.id === metricId && card.location === location);
+    }
+
+    /**
+     * Runs the layout benchmarks, one location at a time. The variants take turns within a location so
+     * that drift in the machine affects all of them alike.
+     */
+    async function runLayout(libs, styles, locations, iterations) {
+        for (const location of locations) {
+            const raw = Object.fromEntries(VARIANTS.map(v => [v.id, {coldLoad: [], tileLoad: [], error: null}]));
+            const cards = [cardFor('layout-cold-load', location), cardFor('layout-tile-load', location)];
+            cards.forEach(card => VARIANTS.forEach(v => { card.status[v.id] = 'running'; }));
+            renderCard(cards[0]);
+            renderCard(cards[1]);
+
+            for (let i = -1; i < iterations; i++) {
+                for (const variant of VARIANTS) {
+                    if (raw[variant.id].error) continue;
+                    setStatus(`Running ${location.name}: ${variant.label}, ${i + 2} of ${iterations + 1}`);
+                    try {
+                        const result = await layoutIteration(libs[variant.build], styles[variant.id], location);
+                        if (i < 0) continue;
+                        raw[variant.id].coldLoad.push(result.coldLoad);
+                        if (result.tileLoad !== null) raw[variant.id].tileLoad.push(result.tileLoad);
+                    } catch (error) {
+                        raw[variant.id].error = String(error);
+                    }
+                }
+            }
+            for (const variant of VARIANTS) {
+                finishVariant(cards[0], variant.id, raw[variant.id].error, () => summarise(raw[variant.id].coldLoad));
+                finishVariant(cards[1], variant.id, raw[variant.id].error, () => summarise(raw[variant.id].tileLoad));
+            }
+            renderCard(cards[0]);
+            renderCard(cards[1]);
+        }
+    }
+
+    async function runPaint(libs, styles, locations, minimumMeasurements) {
+        for (const location of locations) {
+            const card = cardFor('paint', location);
+            for (const variant of VARIANTS) {
+                card.status[variant.id] = 'running';
+                renderCard(card);
+                setStatus(`Running ${location.name}: ${variant.label}, paint`);
+                let error = null;
+                let measurements = [];
+                try {
+                    measurements = await paintMeasurements(libs[variant.build], styles[variant.id], location, minimumMeasurements);
+                } catch (e) {
+                    error = String(e);
+                }
+                finishVariant(card, variant.id, error, () => summarise(measurements.map(m => m.time / m.iterations), measurements));
+                renderCard(card);
+            }
+        }
+    }
+
+    async function runMemory(libs, styles, locations, iterations) {
+        for (const location of locations) {
+            const card = cardFor('memory', location);
+            card.series = {};
+            VARIANTS.forEach((v) => { card.status[v.id] = 'running'; });
+            renderCard(card);
+            const raw = Object.fromEntries(VARIANTS.map(v => [v.id, {runs: [], error: null}]));
+            for (let i = 0; i < iterations; i++) {
+                for (const variant of VARIANTS) {
+                    if (raw[variant.id].error) continue;
+                    setStatus(`Running ${location.name}: ${variant.label}, memory ${i + 1} of ${iterations}`);
+                    try {
+                        raw[variant.id].runs.push(await memoryIteration(libs[variant.build], styles[variant.id], location, 500));
+                    } catch (error) {
+                        raw[variant.id].error = String(error);
+                    }
+                }
+            }
+            for (const variant of VARIANTS) {
+                const {runs, error} = raw[variant.id];
+                card.series[variant.id] = runs;
+                finishVariant(card, variant.id, error, () => summarise(runs.map(run => run.peak)));
+            }
+            renderCard(card);
+        }
+    }
+
+    function finishVariant(card, id, error, summarised) {
+        const result = error ? {error} : summarised();
+        card.status[id] = result.error ? 'errored' : 'ended';
+        card.variants[id] = result;
+    }
+
+    /* ---------------------------------------------------------------- rendering */
+
+    function el(tag, attributes = {}, children = []) {
+        const node = document.createElement(tag);
+        for (const [name, value] of Object.entries(attributes)) {
+            if (name === 'text') node.textContent = value;
+            else node.setAttribute(name, value);
+        }
+        node.append(...children);
+        return node;
+    }
+
+    function dot(color) {
+        const svg = d3.create('svg').attr('width', 8).attr('height', 8);
+        svg.append('circle').attr('fill', color).attr('cx', 4).attr('cy', 4).attr('r', 4);
+        return svg.node();
+    }
+
+    function color(id) {
+        return COLORS[state.variants.findIndex(v => v.id === id)];
+    }
+
+    function label(id) {
+        return state.variants.find(v => v.id === id).label;
+    }
+
+    function change(card, id) {
+        const base = card.variants[state.baseline];
+        const current = card.variants[id];
+        const delta = current.summary.trimmedMean - base.summary.trimmedMean;
+        const pooled = Math.sqrt(
+            ((base.samples.length - 1) * base.summary.windsorizedDeviation ** 2 +
+             (current.samples.length - 1) * current.summary.windsorizedDeviation ** 2) /
+            (base.samples.length + current.samples.length - 2));
+        const effect = Math.abs(delta) / pooled;
+        const {superior, inferior} = probabilitiesOfSuperiority(base.samples, current.samples);
+        return {delta, effect, slower: inferior > superior, probability: Math.max(inferior, superior)};
+    }
+
+    function fitNote(correlation) {
+        return correlation < 0.9 ? 'poor fit' : correlation < 0.99 ? 'check fit' : '';
+    }
+
+    function cell(card, id, content) {
+        const status = card.status[id];
+        if (status === 'waiting') return el('td', {class: 'state', text: 'Waiting'});
+        if (status === 'running') return el('td', {class: 'state', text: 'Running'});
+        if (status === 'errored') return el('td', {class: 'error', text: card.variants[id].error});
+        return el('td', {}, content(card.variants[id]));
+    }
+
+    function statRow(card, title, content) {
+        return el('tr', {}, [el('th', {scope: 'row', text: title}), ...state.variants.map(v => cell(card, v.id, data => content(data, v.id)))]);
+    }
+
+    function table(card) {
+        const unit = card.metric.unit ?? 'ms';
+        const ended = id => card.status[id] === 'ended';
+        const rows = [
+            statRow(card, '(20% trimmed) Mean', (data, id) => {
+                const nodes = [`${formatSample(data.summary.trimmedMean)} ${unit}`];
+                if (id === state.baseline || !ended(state.baseline)) return nodes;
+                const c = change(card, id);
+                const sign = c.delta > 0 ? '+' : '';
+                const emphasis = c.effect < 0.2 ? '' : c.effect < 1.5 ? '' : c.delta > 0 ? ' strong' : ' better';
+                nodes.push(el('span', {class: `change${emphasis}`, text: `${sign}${formatSample(c.delta)} ${unit} / ${c.effect.toFixed(1)} std devs`}));
+                return nodes;
+            }),
+            statRow(card, '(Windsorized) Deviation', data => [`${formatSample(data.summary.windsorizedDeviation)} ${unit}`])
+        ];
+        if (state.variants.some(v => card.variants[v.id]?.regression)) {
+            rows.push(statRow(card, 'R² Slope / Correlation', (data) => {
+                if (!data.regression) return ['not available'];
+                const note = fitNote(data.regression.correlation);
+                return [`${formatSample(data.regression.slope)} ms / ${data.regression.correlation.toFixed(3)} `, el('span', {class: 'fit', text: note})];
+            }));
+        }
+        rows.push(statRow(card, 'Minimum', data => [`${formatSample(data.summary.min)} ${unit}`]));
+
+        const [lng, lat] = card.location.center;
+        return el('table', {}, [
+            el('thead', {}, [
+                el('tr', {}, [el('th', {}, [el('h2', {}, [el('a', {href: `#${card.metric.id}`, text: card.metric.label})])]),
+                    ...state.variants.map(v => el('th', {class: 'version', style: `color:${color(v.id)}`, text: v.label}))]),
+                el('tr', {class: 'location'}, [
+                    el('th', {text: card.location.name}),
+                    el('th', {colspan: 2, text: `Zoom Level: ${card.location.zoom}`}),
+                    el('th', {colspan: 2, text: `Lat: ${lat} Lng: ${lng}`})
+                ])
+            ]),
+            el('tbody', {}, rows)
+        ]);
+    }
+
+    function chanceLines(card) {
+        const ended = id => card.status[id] === 'ended';
+        if (!ended(state.baseline)) return [];
+        return state.variants.filter(v => v.id !== state.baseline && ended(v.id)).map((v) => {
+            const c = change(card, v.id);
+            return el('p', {class: `chance${c.probability > 0.9 ? ' strong' : ' quiet'}`}, [
+                `${(c.probability * 100).toFixed(0)}% chance that a random `, dot(color(v.id)), ` ${v.label} sample is ${c.slower ? 'SLOWER' : 'faster'} than a random `, dot(color(state.baseline)), ` ${label(state.baseline)} sample.`
+            ]);
+        });
+    }
+
+    function statisticsPlot(card) {
+        const ids = state.variants.map(v => v.id).filter(id => card.status[id] === 'ended');
+        const margin = {top: 28, right: 20, bottom: 20, left: 0};
+        const width = 960 - margin.left - margin.right;
+        const height = 380;
+        const kdeWidth = 100;
+        const summaries = ids.map(id => card.variants[id].summary);
+
+        const t = d3.scaleLinear()
+            .domain([d3.min(summaries, s => s.min), d3.max(summaries, s => Math.min(s.max, s.q2 + 3 * s.iqr))])
+            .range([height, 0]).clamp(true).nice();
+        const b = d3.scaleBand().domain(ids).range([kdeWidth + 20, width]).paddingOuter(0.15).paddingInner(0.3);
+        const densities = Object.fromEntries(ids.map(id => [id, kde(card.variants[id].samples, card.variants[id].summary, t.ticks(50))]));
+        const p = d3.scaleLinear().domain([0, d3.max(ids, id => d3.max(densities[id], d => d[1]))]).range([0, kdeWidth]);
+        const line = d3.line().curve(d3.curveBasis).y(d => t(d[0])).x(d => p(d[1]));
+        const tMax = t.domain()[1];
+        const bandwidth = b.bandwidth();
+
+        const svg = d3.create('svg').attr('class', 'plot').attr('viewBox', `0 0 960 ${height + margin.top + margin.bottom}`);
+        const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
+        g.append('g').attr('transform', `translate(0,${height})`).attr('font-size', 10).call(d3.axisBottom(p).ticks(2, '%'));
+        const axis = g.append('g').attr('font-size', 10).call(d3.axisLeft(t).tickFormat(formatSample));
+        axis.append('text').attr('fill', '#000').attr('text-anchor', 'end').attr('y', 6).attr('transform', 'rotate(-90)').attr('dy', '.71em').text(card.metric.unit === 'MB' ? 'Heap growth (MB)' : 'Time (ms)');
+
+        for (const id of ids) {
+            const {samples, summary} = card.variants[id];
+            const {mean, trimmedMean, q1, q2, q3, min, max, argmin, argmax} = summary;
+            const c = color(id);
+            const scale = d3.scaleLinear().domain([0, samples.length]).range([0, bandwidth]);
+            const v = g.append('g');
+            v.append('path').attr('fill', 'none').attr('stroke', c).attr('stroke-width', 2).attr('stroke-opacity', 0.7).attr('d', line(densities[id]));
+
+            const band = v.append('g').attr('transform', `translate(${b(id)},0)`);
+            band.selectAll('circle').data(samples).join('circle')
+                .attr('fill', c).attr('cx', (d, i) => scale(i)).attr('cy', d => t(d))
+                .attr('r', (d, i) => i === argmin || i === argmax ? 2 : 1).style('fill-opacity', d => d < tMax ? 1 : 0);
+            band.selectAll('use.out').data(samples.map((d, i) => [d, i]).filter(([d]) => d >= tMax)).join('use')
+                .attr('class', 'out').attr('href', '#up-arrow').attr('x', ([, i]) => scale(i)).attr('y', ([d]) => t(d))
+                .style('stroke', c).style('stroke-width', ([, i]) => i === argmin || i === argmax ? 2 : 1).style('fill', 'rgba(200, 0, 0, 0.5)');
+            band.append('line').attr('x1', bandwidth / 2).attr('x2', bandwidth / 2).attr('y1', t(q1)).attr('y2', t(q3)).attr('stroke', c).attr('stroke-width', bandwidth).attr('stroke-opacity', 0.5);
+            band.append('line').attr('x1', bandwidth / 2).attr('x2', bandwidth / 2).attr('y1', t(q2) - 0.5).attr('y2', t(q2) + 0.5).attr('stroke', c).attr('stroke-width', bandwidth);
+            band.append('use').attr('href', '#up-arrow').style('stroke', c).style('fill', c).style('fill-opacity', 0.4)
+                .attr('transform', mean >= tMax ? 'translate(-10, 0)' : `translate(-5, ${t(mean)}) rotate(90)`);
+            band.append('use').attr('href', '#up-arrow').style('stroke', c).style('fill', c)
+                .attr('transform', `translate(-5, ${t(trimmedMean)}) rotate(90)`);
+
+            const text = (value, x, y, dx, dy, anchor) => band.append('text')
+                .attr('dx', dx).attr('dy', dy).attr('x', x).attr('y', y).attr('text-anchor', anchor).attr('font-size', 10).text(formatSample(value));
+            [mean, trimmedMean].forEach(d => text(d, 0, t(d), -16, '.3em', 'end'));
+            text(min, scale(argmin), t(min), 0, '1.3em', 'middle');
+            text(max, scale(argmax), t(max), 0, '-0.7em', 'middle');
+            [q1, q2, q3].forEach(d => text(d, bandwidth, t(d), 6, '.3em', 'start'));
+        }
+        return svg.node();
+    }
+
+    function regressionPlot(card) {
+        const ids = state.variants.map(v => v.id).filter(id => card.status[id] === 'ended' && card.variants[id].regression);
+        const margin = {top: 10, right: 20, bottom: 30, left: 0};
+        const width = 960 - margin.left - margin.right;
+        const height = 200 - margin.top - margin.bottom;
+        const x = d3.scaleLinear().domain([0, d3.max(ids, id => d3.max(card.variants[id].regression.data, d => d[0]))]).range([0, width]).nice();
+        const y = d3.scaleLinear().domain([0, d3.max(ids, id => d3.max(card.variants[id].regression.data, d => d[1]))]).range([height, 0]).nice();
+        const line = d3.line().x(d => x(d[0])).y(d => y(d[1]));
+
+        const svg = d3.create('svg').attr('class', 'plot').attr('viewBox', `0 0 960 ${height + margin.top + margin.bottom}`);
+        const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
+        g.append('g').attr('transform', `translate(0,${height})`).attr('font-size', 10).call(d3.axisBottom(x))
+            .append('text').attr('fill', '#000').attr('text-anchor', 'end').attr('y', -6).attr('x', width).text('Iterations');
+        g.append('g').attr('font-size', 10).call(d3.axisLeft(y).ticks(4).tickFormat(formatSample))
+            .append('text').attr('fill', '#000').attr('text-anchor', 'end').attr('y', 6).attr('transform', 'rotate(-90)').attr('dy', '.71em').text('Time (ms)');
+
+        for (const id of ids) {
+            const r = card.variants[id].regression;
+            const v = g.append('g').attr('fill', color(id)).attr('fill-opacity', 0.7);
+            v.selectAll('circle').data(r.data).join('circle').attr('r', 2).attr('cx', d => x(d[0])).attr('cy', d => y(d[1]));
+            v.append('path').attr('fill', 'none').attr('stroke', color(id)).attr('stroke-width', 1).attr('stroke-opacity', 0.5)
+                .attr('d', line(r.data.map(d => [d[0], d[0] * r.slope + r.intercept])));
+        }
+        return svg.node();
+    }
+
+    /** The heap growth of every cold load against time, with the median over the loads in bold. */
+    function memorySeriesPlot(card) {
+        const ids = state.variants.map(v => v.id).filter(id => card.status[id] === 'ended' && card.series?.[id]?.length > 0);
+        const margin = {top: 10, right: 20, bottom: 30, left: 0};
+        const width = 960 - margin.left - margin.right;
+        const height = 240 - margin.top - margin.bottom;
+        const step = 25;
+        const lastTime = d3.max(ids, id => d3.max(card.series[id], run => d3.max(run.series, d => d[0])));
+        const bins = d3.range(0, lastTime + step, step);
+
+        function medianSeries(id) {
+            return bins.map((time) => {
+                const values = card.series[id].map((run) => {
+                    const upTo = run.series.filter(d => d[0] <= time);
+                    return upTo.length > 0 ? upTo[upTo.length - 1][1] : 0;
+                });
+                return [time, d3.median(values)];
+            });
+        }
+        const medians = Object.fromEntries(ids.map(id => [id, medianSeries(id)]));
+        const x = d3.scaleLinear().domain([0, lastTime]).range([0, width]).nice();
+        const y = d3.scaleLinear()
+            .domain([d3.min(ids, id => d3.min(card.series[id], r => d3.min(r.series, d => d[1]))), d3.max(ids, id => d3.max(card.series[id], r => d3.max(r.series, d => d[1])))])
+            .range([height, 0]).nice();
+        const line = d3.line().x(d => x(d[0])).y(d => y(d[1]));
+
+        const svg = d3.create('svg').attr('class', 'plot').attr('viewBox', `0 0 960 ${height + margin.top + margin.bottom}`);
+        const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
+        g.append('g').attr('transform', `translate(0,${height})`).attr('font-size', 10).call(d3.axisBottom(x))
+            .append('text').attr('fill', '#000').attr('text-anchor', 'end').attr('y', -6).attr('x', width).text('Time since the map was created (ms)');
+        g.append('g').attr('font-size', 10).call(d3.axisLeft(y).ticks(5).tickFormat(formatSample))
+            .append('text').attr('fill', '#000').attr('text-anchor', 'end').attr('y', 6).attr('transform', 'rotate(-90)').attr('dy', '.71em').text('Heap growth (MB)');
+
+        for (const id of ids) {
+            const idle = d3.median(card.series[id], run => run.idleAt);
+            g.append('line').attr('x1', x(idle)).attr('x2', x(idle)).attr('y1', 0).attr('y2', height).attr('stroke', color(id)).attr('stroke-dasharray', '4 3').attr('stroke-opacity', 0.6);
+            for (const run of card.series[id]) {
+                g.append('path').attr('fill', 'none').attr('stroke', color(id)).attr('stroke-opacity', 0.2).attr('d', line(run.series));
+            }
+            g.append('path').attr('fill', 'none').attr('stroke', color(id)).attr('stroke-width', 2).attr('d', line(medians[id]));
+        }
+        return svg.node();
+    }
+
+    function renderCard(card) {
+        const finished = state.variants.every(v => ['ended', 'errored'].includes(card.status[v.id]));
+        const endedIds = state.variants.filter(v => card.status[v.id] === 'ended');
+        const node = card.node ?? (card.node = el('section', {class: 'bench', id: ''}));
+        node.replaceChildren(table(card), ...chanceLines(card));
+        if (finished && endedIds.length > 0) {
+            node.append(statisticsPlot(card));
+            if (endedIds.some(v => card.variants[v.id].regression)) node.append(regressionPlot(card));
+            if (card.metric.id === 'memory' && card.series) node.append(memorySeriesPlot(card), el('p', {class: 'note', text: memoryNote()}));
+        }
+        if (!node.isConnected) document.getElementById('benchmarks').append(node);
+    }
+
+    function renderAll() {
+        state.cards.forEach(renderCard);
+    }
+
+    /* ---------------------------------------------------------------- start */
+
+    /** The number of timed cold loads per variant and location, 5 unless the address or the field says otherwise. */
+    function runsFromParameters() {
+        const runs = Math.floor(Number(params.get('iterations') ?? 5));
+        return runs >= 2 ? runs : 5;
+    }
+
+    /** Starts the benchmark again with the number of runs in the field; a running benchmark is abandoned. */
+    function runAgain() {
+        const runs = Math.floor(Number(document.getElementById('runs').value));
+        if (!(runs >= 2)) {
+            setStatus('Runs must be a number of at least 2.');
+            return;
+        }
+        const types = typeBoxes.filter(box => box.checked).map(box => box.dataset.type);
+        if (types.length === 0) {
+            setStatus('Choose at least one benchmark to run.');
+            return;
+        }
+        const next = new URLSearchParams(location.search);
+        next.set('iterations', String(runs));
+        next.set('types', types.join(','));
+        location.search = next.toString();
+    }
+
+    const typeBoxes = [...document.querySelectorAll('input[data-type]')];
+    for (const box of typeBoxes) box.checked = typesFromParameters().has(box.dataset.type);
+
+    const runsField = document.getElementById('runs');
+    runsField.value = String(runsFromParameters());
+    runsField.addEventListener('keydown', (e) => { if (e.key === 'Enter') runAgain(); });
+    document.getElementById('rerun').addEventListener('click', runAgain);
+
+    const baselineSelect = document.getElementById('baseline');
+    for (const variant of VARIANTS) baselineSelect.append(el('option', {value: variant.id, text: variant.label}));
+    baselineSelect.value = state.baseline;
+    baselineSelect.addEventListener('change', () => { state.baseline = baselineSelect.value; renderAll(); });
+
+    function setFinished(report) {
+        document.getElementById('state').textContent = '- Finished';
+        setStatus(`${new Date(report.generatedAt).toLocaleString()}. ${report.machine}`);
+        const link = document.getElementById('download');
+        link.href = URL.createObjectURL(new Blob([JSON.stringify(report)], {type: 'application/json'}));
+        link.download = `styles-${report.generatedAt.replace(/[:.]/g, '-')}.json`;
+        link.style.display = 'inline';
+    }
+
+    function toReport(iterations, minimumPaintMeasurements) {
+        return {
+            generatedAt: new Date().toISOString(),
+            machine: navigator.userAgent,
+            iterations,
+            paintMeasurements: minimumPaintMeasurements,
+            variants: VARIANTS.map(({id, label}) => ({id, label})),
+            metrics: METRICS.filter(metric => state.cards.some(card => card.metric.id === metric.id)),
+            results: state.cards.map(card => ({location: card.location, metric: card.metric, variants: card.variants, status: card.status, series: card.series}))
+        };
+    }
+
+    function markMemoryUnavailable() {
+        for (const card of state.cards.filter(c => c.metric.id === 'memory')) {
+            VARIANTS.forEach((v) => {
+                card.status[v.id] = 'errored';
+                card.variants[v.id] = {error: 'performance.memory is not available in this browser'};
+            });
+            renderCard(card);
+        }
+    }
+
+    function cardsFor(locations, types) {
+        const metrics = METRICS.filter(metric => [...types].some(type => TYPES[type].includes(metric.id)));
+        return metrics.flatMap(metric => locations.map(location => ({
+            metric, location, variants: {}, status: Object.fromEntries(VARIANTS.map(v => [v.id, 'waiting']))
+        })));
+    }
+
+    async function showFile(file) {
+        const report = await (await fetch(file)).json();
+        state.variants = report.variants.map(v => VARIANTS.find(x => x.id === v.id) ?? v);
+        state.metrics = report.metrics;
+        state.cards = report.results.map(r => ({
+            metric: r.metric, location: r.location, variants: r.variants, series: r.series,
+            status: Object.fromEntries(Object.keys(r.variants).map(id => [id, 'ended']))
+        }));
+        renderAll();
+        document.getElementById('state').textContent = '- Finished';
+        setStatus(`${new Date(report.generatedAt).toLocaleString()}. ${report.machine}`);
+    }
+
+    async function runLive() {
+        const iterations = runsFromParameters();
+        const minimumPaintMeasurements = Number(params.get('paint') ?? 210);
+        const memoryIterations = Number(params.get('memory') ?? 5);
+        const locations = LOCATIONS.slice(0, Number(params.get('locations') ?? LOCATIONS.length));
+        const types = typesFromParameters();
+        state.cards = cardsFor(locations, types);
+        renderAll();
+        document.getElementById('state').textContent = '- Running';
+
+        setStatus('Loading the builds and styles');
+        installWorkerHeapReporter();
+        const [libs, styles] = await Promise.all([loadBuilds(), loadStyles()]);
+        if (types.has('layout')) await runLayout(libs, styles, locations, iterations);
+        if (types.has('paint')) await runPaint(libs, styles, locations, minimumPaintMeasurements);
+        if (types.has('memory') && performance.memory) await runMemory(libs, styles, locations, memoryIterations);
+        else if (types.has('memory')) markMemoryUnavailable();
+        setFinished(toReport(iterations, minimumPaintMeasurements));
+    }
+
+    const file = params.get('file');
+    (file ? showFile(file) : runLive()).catch((error) => {
+        document.getElementById('state').textContent = '- Failed';
+        setStatus(String(error));
+        console.error(error);
+    });
+</script>
+</body>
+</html>

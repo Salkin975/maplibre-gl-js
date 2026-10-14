@@ -17,6 +17,8 @@ coverage
 .DS_Store
 .nyc_output
 bench-baseline.json
+bench-builds/
+bench-results/
 test/integration/**/results*.html
 test/integration/**/actual.png
 test/integration/**/actual.json
