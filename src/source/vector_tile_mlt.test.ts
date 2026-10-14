@@ -1,8 +1,9 @@
 import {describe, test, expect, vi, afterEach} from 'vitest';
 import {readFileSync} from 'fs';
 import path from 'path';
+import Point from '@mapbox/point-geometry';
 import {classifyRings} from '@maplibre/maplibre-gl-style-spec';
-import {GEOMETRY_TYPE, FeatureTable, createFlatGpuVector, decodeTile, encodeTile} from '@maplibre/mlt';
+import {GEOMETRY_TYPE, FeatureTable, GeometryVector, createFlatGpuVector, decodeTile, encodeTile} from '@maplibre/mlt';
 import {MLTVectorTile, MLTVectorTileLayer, hasRingTopology, isMLTVectorTileLayer, tessellatedVertexBase} from './vector_tile_mlt';
 
 function encode(): ArrayBuffer {
@@ -25,6 +26,29 @@ function encode(): ArrayBuffer {
         }
     ], {propertyTypes: {big: 'int64'}});
     return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
+
+/** One line of four vertices that share three positions, which it reads through a vertex dictionary. */
+class DictionaryLineVector extends GeometryVector {
+    constructor() {
+        super(1, {partOffsets: new Uint32Array([0, 4])}, new Uint32Array([2, 0, 1, 2]), new Int32Array([0, 0, 10, 0, 10, 10]));
+    }
+
+    get numGeometries(): number {
+        return 1;
+    }
+
+    geometryType(): number {
+        return GEOMETRY_TYPE.LINESTRING;
+    }
+
+    containsPolygonGeometry(): boolean {
+        return false;
+    }
+
+    containsSingleGeometryType(): boolean {
+        return true;
+    }
 }
 
 describe('MLTVectorTile', () => {
@@ -64,6 +88,40 @@ describe('MLTVectorTile', () => {
         expect('rank' in second).toBe(false);
         expect(Object.keys(first).sort()).toEqual(['name', 'rank']);
         expect({...second}).toEqual({name: 'b'});
+    });
+
+    test('reads every geometry type as the MLT package decodes it, into points of its own', () => {
+        const bytes = encodeTile([{
+            name: 'mixed',
+            extent: 4096,
+            features: [
+                {geometry: {type: 'Point', coordinates: [1, 2]}, properties: {}},
+                {geometry: {type: 'MultiPoint', coordinates: [[1, 2], [3, 4]]}, properties: {}},
+                {geometry: {type: 'LineString', coordinates: [[0, 0], [5, 5], [9, 0]]}, properties: {}},
+                {geometry: {type: 'MultiLineString', coordinates: [[[0, 0], [5, 5]], [[10, 10], [20, 20], [30, 10]]]}, properties: {}},
+                {geometry: {type: 'Polygon', coordinates: [[[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]], [[2, 2], [2, 4], [4, 4], [2, 2]]]}, properties: {}},
+                {geometry: {type: 'MultiPolygon', coordinates: [[[[0, 0], [10, 0], [10, 10], [0, 0]]], [[[20, 20], [30, 20], [30, 30], [20, 20]]]]}, properties: {}}
+            ]
+        }]);
+        const table = decodeTile(bytes)[0];
+        const layer = new MLTVectorTileLayer(table);
+        const geometryVector = table.geometryVector as GeometryVector;
+
+        for (let i = 0; i < table.numFeatures; i++) {
+            const geometry = layer.feature(i).loadGeometry();
+
+            expect(geometry).toEqual(geometryVector.getGeometry(i).map(ring => ring.map(({x, y}) => ({x, y}))));
+            expect(geometry.flat().every(point => point instanceof Point)).toBe(true);
+        }
+    });
+
+    test('reads vertices through the dictionary of a layer that stores them once', () => {
+        const table = new FeatureTable('roads', new DictionaryLineVector(), undefined, [], 4096, 1);
+
+        const geometry = new MLTVectorTileLayer(table).feature(0).loadGeometry();
+
+        expect(geometry).toEqual([[{x: 10, y: 10}, {x: 0, y: 0}, {x: 10, y: 0}, {x: 10, y: 10}]]);
+        expect(geometry).toEqual((table.geometryVector as GeometryVector).getGeometry(0).map(line => line.map(({x, y}) => ({x, y}))));
     });
 
     test('reads 64-bit values outside the safe range as the nearest number, as MVT does', () => {
