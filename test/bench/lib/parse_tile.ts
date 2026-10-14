@@ -43,7 +43,7 @@ const lineAtlas = new LineAtlas(256, 512);
  * The glyph PBFs are keyed by codepoint, as a glyphs URL serves them, so a cluster of several
  * codepoints has no glyph of its own here -- exactly as it would have none on a server.
  */
-const actor = {
+export const actor = {
     sendAsync(rawMessage) {
         const message = rawMessage as AnyActorMessage;
         if (message.type === MessageType.getGlyphs) {
