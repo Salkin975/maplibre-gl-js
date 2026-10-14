@@ -2,13 +2,13 @@ import {GpuVector, SINGLE_PART_GEOMETRY_TYPE} from '@maplibre/mlt';
 import {FillBucket} from '../fill_bucket.ts';
 import {warnOnce} from '../../../util/util.ts';
 import {register} from '../../../util/web_worker_transfer.ts';
-import {fillLargeMeshArrays} from '../../../render/fill_large_mesh_arrays.ts';
 import {selectColumnarFeatures, materializeSelectedFeatures, isRowFeatureList, loadGeometryOrEmpty, columnarTransferOmitList} from './columnar_populate.ts';
-import {buildTessellatedFillMesh, buildTessellatedBoundingBox, extentScale} from './columnar_mesh_arrays.ts';
+import {writeTessellatedFill, reserveTessellatedFill, buildTessellatedBoundingBox, extentScale} from './columnar_mesh_arrays.ts';
 import {hasRingTopology, MLTVectorTileLayer} from '../../../source/vector_tile_mlt.ts';
 
 import type Point from '@mapbox/point-geometry';
 import type {FeatureTable} from '@maplibre/mlt';
+import type {VectorTileFeatureLike} from '@maplibre/vt-pbf';
 import type {CanonicalTileID} from '../../../tile/tile_id.ts';
 import type {ImagePosition} from '../../../render/image_atlas.ts';
 import type {BucketParameters, BucketDependencyParameters, BucketFeature, IndexedFeature, PopulateParameters} from '../../bucket.ts';
@@ -53,7 +53,9 @@ export class ColumnarFillBucket extends FillBucket {
         const fillSortKey = layer.layout.get('fill-sort-key');
         const sourceLayer = new MLTVectorTileLayer(featureTable);
         const selection = selectColumnarFeatures(featureTable, layer.filter, this.zoom, [SINGLE_PART_GEOMETRY_TYPE.POLYGON]);
+        const sourceFeatures: VectorTileFeatureLike[] = [];
         const bucketFeatures = materializeSelectedFeatures(sourceLayer, selection, this.sourceLayerIndex, {
+            features: sourceFeatures,
             resolveGeometry: (feature, index) => isTessellated
                 ? buildTessellatedBoundingBox(geometryVector, index, scale)
                 : loadGeometryOrEmpty(feature, index),
@@ -62,7 +64,8 @@ export class ColumnarFillBucket extends FillBucket {
                 : (bucketFeature) => fillSortKey.evaluate(bucketFeature, {}, canonical, options.availableImages),
         });
 
-        this.addBucketFeatures(bucketFeatures, index => sourceLayer.feature(index), options, canonical);
+        if (isTessellated) reserveTessellatedFill(this, geometryVector, bucketFeatures);
+        this.addBucketFeatures(bucketFeatures, index => sourceFeatures[index], options, canonical);
         if (!this.hasDependencies) this.releaseTessellationState();
     }
 
@@ -81,18 +84,7 @@ export class ColumnarFillBucket extends FillBucket {
             return;
         }
 
-        const mesh = buildTessellatedFillMesh(this.tessellatedGeometryVector, index, this.tessellatedScale);
-        fillLargeMeshArrays(
-            (x, y) => this.layoutVertexArray.emplaceBack(x, y),
-            this.segments,
-            this.layoutVertexArray,
-            this.indexArray,
-            mesh.flattenedVertices,
-            mesh.triangleIndices,
-            this.segments2,
-            this.indexArray2,
-            mesh.lineIndexLists,
-        );
+        writeTessellatedFill(this, this.tessellatedGeometryVector, index, this.tessellatedScale);
         this.programConfigurations.populatePaintArrays(this.layoutVertexArray.length, feature, index, {imagePositions, canonical});
     }
 

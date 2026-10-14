@@ -1,11 +1,11 @@
-import {filterFeatureTable, unionSelectionVectors, intersectSelectionVectors} from '@maplibre/mlt';
+import {filterFeatureTable, unionSelectionVectors, intersectSelectionVectors, GpuVector, SINGLE_PART_GEOMETRY_TYPE} from '@maplibre/mlt';
 import {loadGeometry} from '../../load_geometry.ts';
 import {warnOnce} from '../../../util/util.ts';
 
 import type Point from '@mapbox/point-geometry';
 import type {FilterSpecification} from '@maplibre/maplibre-gl-style-spec';
 import type {VectorTileFeatureLike} from '@maplibre/vt-pbf';
-import type {FeatureTable, SelectionVector, SINGLE_PART_GEOMETRY_TYPE} from '@maplibre/mlt';
+import type {FeatureTable, SelectionVector} from '@maplibre/mlt';
 import type {BucketFeature, IndexedFeature} from '../../bucket.ts';
 import type {FeatureIndex} from '../../feature_index.ts';
 import type {MLTVectorTileLayer} from '../../../source/vector_tile_mlt.ts';
@@ -22,7 +22,9 @@ export function isRowFeatureList(features: IndexedFeature[] | MLTVectorTileLayer
  * Applies the layer filter to `featureTable`'s columns and returns the selected feature indices.
  *
  * When `renderableGeometryTypes` is given, the result is narrowed to features of those geometry types -
- * the union of their per-type selections, intersected with the filter selection.
+ * the union of their per-type selections, intersected with the filter selection. A pre-tessellated layer
+ * holds polygons only, so for polygons its filter selection is already the answer and no geometry
+ * selection is made.
  *
  * Throws if the filter cannot be planned over the columns: `createBucket()` only chose a columnar
  * bucket because `isColumnarBucketSupported()` had already answered the same question with "yes", so a
@@ -44,6 +46,9 @@ export function selectColumnarFeatures(
     if (!geometryVector) {
         throw new Error('Columnar bucket needs geometry, but the feature table has no geometry column.');
     }
+    const isPolygonOnly = geometryVector instanceof GpuVector && renderableGeometryTypes.includes(SINGLE_PART_GEOMETRY_TYPE.POLYGON);
+    if (isPolygonOnly) return filterSelection;
+
     const geometrySelection = unionSelectionVectors(
         renderableGeometryTypes.map(type => geometryVector.filter(type)),
         featureTable.numFeatures,
@@ -68,6 +73,9 @@ export function loadGeometryOrEmpty(feature: VectorTileFeatureLike, _index: numb
  *
  * `resolveGeometry` defaults to a full ring decode; pass a cheaper resolver (e.g. a bounding box) when
  * the bucket's write step never reads the geometry back.
+ *
+ * When `features` is given, the source feature of every materialized row is stored in it under the row's
+ * index, so that the bucket can hand the same object to the spatial index instead of reading it again.
  */
 export function materializeSelectedFeatures(
     sourceLayer: MLTVectorTileLayer,
@@ -79,6 +87,7 @@ export function materializeSelectedFeatures(
         /** Gives each feature a `dashes` object, which the line bucket's dash handling assumes is present. */
         hasDashes?: boolean;
         sortKey?: (bucketFeature: BucketFeature) => number | undefined;
+        features?: VectorTileFeatureLike[];
     } = {},
 ): BucketFeature[] {
     const resolveGeometry = options.resolveGeometry ?? loadGeometryOrEmpty;
@@ -87,6 +96,7 @@ export function materializeSelectedFeatures(
     for (let i = 0; i < selection.limit; i++) {
         const index = selection.getIndex(i);
         const feature = sourceLayer.feature(index);
+        if (options.features) options.features[index] = feature;
         const bucketFeature: BucketFeature = {
             id: featureIndex.getId(feature, sourceLayer.name),
             properties: feature.properties,
