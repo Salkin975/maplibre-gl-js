@@ -155,3 +155,11 @@ The memory benchmark samples the JS heap of the page and of its workers every 25
 ### Run it from the command line
 
 `npm run bench-e2e-styles -- --iterations 20` runs the same variants and locations in headless Chrome and adds the worker busy time. `--iterations` is the number of cold loads per variant and location, `--paint-measurements` the number of timed repaint batches (default 210), `--locations N` limits the run to the first N locations, and `--old-dist` and `--new-dist` choose the build directories. The results are written to `bench-results/styles-latest.json` and shown by the page with `?file=/bench-results/styles-latest.json`.
+
+### Where the worker spends a tile
+
+With `LOG_WORKER_TIMING` switched on in `src/source/worker_timing.ts`, `WorkerTile.parse()` appends one JSON line per tile to its worker's timing log: the parse time, the wait for glyphs, icons, patterns and dashes, and per layer the time to create and populate the bucket and to lay it out once its dependencies arrived, split into the phases the bucket records.
+
+`npm run bench-e2e-timings` cold-loads `osm-bright` and `positron` in MVT and MLT with the build in `dist`, collects those lines from the workers into `bench-results/worker-timing.jsonl` and prints them summed by bucket. Headless Chrome runs the main thread, the workers and the tile server on the same cores, so these times are noisy.
+
+`npm run bench -- src/source/worker_tile_nrw.bench.ts` parses the same twelve tiles of Cologne single-threaded in Node instead, which is steadier and is the one to compare changes with. Set `NRW_VARIANTS=osm-bright/mlt` to run one variant, and `NRW_CPU_PROFILE=<file>.cpuprofile` to record a CPU profile of the measured rounds.
