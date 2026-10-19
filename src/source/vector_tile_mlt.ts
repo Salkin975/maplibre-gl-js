@@ -321,7 +321,15 @@ export function isMLTVectorTileLayer(layer: VectorTileLayerLike): layer is MLTVe
  * access, and the tile bytes must stay unmodified for as long as any layer may still be read.
  */
 export class MLTVectorTile implements VectorTileLike {
-    layers: Record<string, VectorTileLayerLike> = {};
+    /**
+     * The tile's layers by name, see {@link defineLazyLayer}.
+     *
+     * The object has no prototype. A layer turns from a getter into a data property on its first read,
+     * and on an object built from `{}` that reconfigures hidden classes V8 shares with every other such
+     * object, among them the ones keyed by style layer ids, which keeps deoptimizing the code that loops
+     * over those with `for...in`.
+     */
+    layers: Record<string, VectorTileLayerLike> = Object.create(null);
 
     constructor(buffer: ArrayBuffer, options: MLTVectorTileOptions = {}) {
         for (const layerBlock of scanLayerBlocks(new Uint8Array(buffer))) {
