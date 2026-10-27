@@ -1,9 +1,10 @@
-import {GpuVector, SINGLE_PART_GEOMETRY_TYPE} from '@maplibre/mlt';
+import {GeometryVector, GpuVector, SINGLE_PART_GEOMETRY_TYPE} from '@maplibre/mlt';
 import {FillBucket} from '../fill_bucket.ts';
 import {warnOnce} from '../../../util/util.ts';
 import {register} from '../../../util/web_worker_transfer.ts';
 import {selectColumnarFeatures, materializeSelectedFeatures, isRowFeatureList, loadGeometryOrEmpty, columnarTransferOmitList} from './columnar_populate.ts';
-import {writeTessellatedFill, reserveTessellatedFill, buildTessellatedBoundingBox, extentScale} from './columnar_mesh_arrays.ts';
+import {EXTENT} from '../../extent.ts';
+import {writeTessellatedFill, buildTessellatedBoundingBox, canWriteEarcutFill, writeEarcutFill, buildRingBoundingBoxes} from './columnar_mesh_arrays.ts';
 import {hasRingTopology, MLTVectorTileLayer} from '../../../source/vector_tile_mlt.ts';
 
 import type Point from '@mapbox/point-geometry';
@@ -16,17 +17,18 @@ import type {FillStyleLayer} from '../../../style/style_layer/fill_style_layer.t
 import type {SubdivisionGranularitySetting} from '../../../render/subdivision_granularity_settings.ts';
 
 /**
- * A `FillBucket` that selects its features from an MLT feature table's columns. When the tile is
- * pre-tessellated, a feature's triangles come straight from the tile's own mesh instead of from
- * earcut; everything else - sorting, pattern handling, indexing - is `FillBucket`'s own.
+ * A `FillBucket` that selects its features from an MLT feature table's columns and writes them straight
+ * from the table's vertex buffer: a pre-tessellated tile's triangles come from the tile's own mesh, and
+ * any other tile's polygons are triangulated by earcut on the buffer, without making a point of each
+ * vertex. A tile that `subdividePolygon()` would change - on the globe, or at the edge of the world - is
+ * triangulated by `FillBucket`. Sorting, pattern handling and indexing are `FillBucket`'s own.
  */
 export class ColumnarFillBucket extends FillBucket {
     isColumnar = true;
     sourceLayerIndex: number;
 
-    /** Set while a pre-tessellated tile is being written, so `addFeature()` can read its mesh. */
-    private tessellatedGeometryVector: GpuVector | undefined;
-    private tessellatedScale: number | undefined;
+    /** Set while the bucket writes features straight from the tile's geometry, so `addFeature()` can read it. */
+    private direct: {geometryVector: GpuVector | GeometryVector; scale: number} | undefined;
 
     constructor(options: BucketParameters<FillStyleLayer>) {
         super(options);
@@ -46,9 +48,9 @@ export class ColumnarFillBucket extends FillBucket {
         if (isTessellated && !hasRingTopology(geometryVector)) {
             warnOnce(`Fill layer "${layer.id}" is pre-tessellated without ring topology, so it draws no outline and "fill-outline-color" has no effect on it.`);
         }
-        const scale = extentScale(featureTable.extent);
-        this.tessellatedGeometryVector = isTessellated ? geometryVector : undefined;
-        this.tessellatedScale = scale;
+        const granularity = options.subdivisionGranularity.fill.getGranularityForZoomLevel(canonical.z);
+        const isEarcut = geometryVector instanceof GeometryVector && canWriteEarcutFill(geometryVector, canonical, granularity);
+        this.direct = isTessellated || isEarcut ? {geometryVector, scale: EXTENT / featureTable.extent} : undefined;
 
         const fillSortKey = layer.layout.get('fill-sort-key');
         const sourceLayer = new MLTVectorTileLayer(featureTable);
@@ -56,47 +58,59 @@ export class ColumnarFillBucket extends FillBucket {
         const sourceFeatures: VectorTileFeatureLike[] = [];
         const bucketFeatures = materializeSelectedFeatures(sourceLayer, selection, this.sourceLayerIndex, {
             features: sourceFeatures,
-            resolveGeometry: (feature, index) => isTessellated
-                ? buildTessellatedBoundingBox(geometryVector, index, scale)
-                : loadGeometryOrEmpty(feature, index),
+            resolveGeometry: (feature, index) => this.indexedGeometry(feature, index),
             sortKey: fillSortKey.isConstant()
                 ? undefined
                 : (bucketFeature) => fillSortKey.evaluate(bucketFeature, {}, canonical, options.availableImages),
         });
 
-        if (isTessellated) reserveTessellatedFill(this, geometryVector, bucketFeatures);
         this.addBucketFeatures(bucketFeatures, index => sourceFeatures[index], options, canonical);
-        if (!this.hasDependencies) this.releaseTessellationState();
+        if (!this.hasDependencies) this.releaseDirectGeometry();
     }
 
     addFeatures(parameters: BucketDependencyParameters): void {
         super.addFeatures(parameters);
-        this.releaseTessellationState();
+        this.releaseDirectGeometry();
     }
 
     /**
-     * Writes a feature of a pre-tessellated tile from the tile's own mesh, whose `geometry` is only the
-     * bounding box `FeatureIndex` needs; any other feature is triangulated by `FillBucket`.
+     * Writes a feature straight from the tile's geometry when the bucket does so, see the class; its
+     * `geometry` is then only the bounding boxes `FeatureIndex` needs. Any other feature is triangulated
+     * by `FillBucket`.
      */
     addFeature(feature: BucketFeature, geometry: Point[][], index: number, canonical: CanonicalTileID, imagePositions: Record<string, ImagePosition>, subdivisionGranularity: SubdivisionGranularitySetting): void {
-        if (!this.tessellatedGeometryVector) {
+        if (!this.direct) {
             super.addFeature(feature, geometry, index, canonical, imagePositions, subdivisionGranularity);
             return;
         }
 
-        writeTessellatedFill(this, this.tessellatedGeometryVector, index, this.tessellatedScale);
+        const {geometryVector, scale} = this.direct;
+        if (geometryVector instanceof GpuVector) writeTessellatedFill(this, geometryVector, index, scale);
+        else writeEarcutFill(this, geometryVector, index, scale);
         this.programConfigurations.populatePaintArrays(this.layoutVertexArray.length, feature, index, {imagePositions, canonical});
     }
 
     /**
-     * Drops the tile's decoded columns once the bucket has written everything it needs from them.
-     *
-     * The bucket itself is structure-cloned to the main thread, and a `GpuVector` is not a class
-     * `web_worker_transfer` knows how to send.
+     * The geometry a feature is indexed with for `queryRenderedFeatures`: its bounding boxes when the
+     * bucket writes it straight from the tile's geometry, else its rings.
      */
-    private releaseTessellationState(): void {
-        this.tessellatedGeometryVector = undefined;
-        this.tessellatedScale = undefined;
+    private indexedGeometry(feature: VectorTileFeatureLike, index: number): Point[][] {
+        if (!this.direct) return loadGeometryOrEmpty(feature, index);
+
+        const {geometryVector, scale} = this.direct;
+        return geometryVector instanceof GpuVector ?
+            buildTessellatedBoundingBox(geometryVector, index, scale) :
+            buildRingBoundingBoxes(geometryVector, index, scale);
+    }
+
+    /**
+     * Drops the tile's geometry once the bucket has written everything it needs from it.
+     *
+     * The bucket itself is structure-cloned to the main thread, and neither a `GpuVector` nor a
+     * `GeometryVector` is a class `web_worker_transfer` knows how to send.
+     */
+    private releaseDirectGeometry(): void {
+        this.direct = undefined;
     }
 }
 

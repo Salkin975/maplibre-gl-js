@@ -5,7 +5,8 @@ import {decodeTile, GpuVector} from '@maplibre/mlt';
 import {FillLayoutArray, LineIndexArray, TriangleIndexArray} from '../../array_types.g.ts';
 import {SegmentVector} from '../../segment.ts';
 import {fillLargeMeshArrays} from '../../../render/fill_large_mesh_arrays.ts';
-import {buildTessellatedFillMesh, extentScale, reserveTessellatedFill, writeTessellatedFill, type FillMeshTarget} from './columnar_mesh_arrays.ts';
+import {EXTENT} from '../../extent.ts';
+import {buildTessellatedFillMesh, writeTessellatedFill, type FillMeshTarget} from './columnar_mesh_arrays.ts';
 
 describe('buildTessellatedFillMesh', () => {
     test('draws every feature\'s triangles from that feature\'s own vertices', () => {
@@ -16,7 +17,7 @@ describe('buildTessellatedFillMesh', () => {
 
         for (const table of tessellated) {
             const geometryVector = table.geometryVector as GpuVector;
-            const scale = extentScale(table.extent);
+            const scale = EXTENT / table.extent;
             for (let index = 1; index < table.numFeatures; index++) {
                 const mesh = buildTessellatedFillMesh(geometryVector, index, scale);
                 const ringVertices = mesh.lineIndexLists.flat();
@@ -39,7 +40,7 @@ describe('writeTessellatedFill', () => {
 
         for (const table of tables) {
             const geometryVector = table.geometryVector as GpuVector;
-            const scale = extentScale(table.extent);
+            const scale = EXTENT / table.extent;
             for (let index = 0; index < table.numFeatures; index++) {
                 const written = createTarget();
                 writeTessellatedFill(written, geometryVector, index, scale);
@@ -114,7 +115,7 @@ describe('writeTessellatedFill', () => {
         expect(Array.from(fractional.layoutVertexArray.int16.slice(0, 6))).toEqual([2, 5, 16383, -16384, 0, 0]);
     });
 
-    test('flips the triangles of a feature that winds clockwise, and only that feature', () => {
+    test('writes the triangles that wind clockwise counter-clockwise', () => {
         const target = createTarget();
         const geometryVector = {
             triangleOffsets: new Uint32Array([0, 1, 2]),
@@ -130,23 +131,6 @@ describe('writeTessellatedFill', () => {
         for (const [a, b, c] of trianglesOf(target)) {
             expect((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])).toBeLessThanOrEqual(0);
         }
-    });
-});
-
-describe('reserveTessellatedFill', () => {
-    test('makes room for the triangles and the vertices of the features, without writing any', () => {
-        const file = path.join(__dirname, '../../../../test/integration/assets/tiles/mlt/5/22/12.mlt');
-        const table = decodeTile(new Uint8Array(readFileSync(file))).find(t => t.geometryVector instanceof GpuVector);
-        const geometryVector = table.geometryVector as GpuVector;
-        const target = createTarget();
-        const features = Array.from({length: table.numFeatures}, (_, index) => ({index}));
-
-        reserveTessellatedFill(target, geometryVector, features);
-
-        expect(target.indexArray.capacity).toBeGreaterThanOrEqual(geometryVector.triangleOffsets[table.numFeatures]);
-        expect(target.layoutVertexArray.capacity).toBeGreaterThanOrEqual(geometryVector.topologyVector.ringOffsets.at(-1));
-        expect(target.indexArray).toHaveLength(0);
-        expect(target.layoutVertexArray).toHaveLength(0);
     });
 });
 
@@ -195,10 +179,6 @@ function ringOfVertices(numVertices: number): GpuVector {
         triangleOffsets: new Uint32Array([0, numVertices - 2]),
         indexBuffer,
         vertexBuffer,
-        topologyVector: {ringOffsets: new Uint32Array([0, numVertices])},
-        getGeometry: () => {
-            const ring = Array.from({length: numVertices}, (_, i) => ({x: vertexBuffer[i * 2], y: vertexBuffer[i * 2 + 1]}));
-            return [[...ring, ring[0]]];
-        }
+        topologyVector: {ringOffsets: new Uint32Array([0, numVertices])}
     } as unknown as GpuVector;
 }
