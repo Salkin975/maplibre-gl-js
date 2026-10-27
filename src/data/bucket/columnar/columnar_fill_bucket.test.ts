@@ -8,8 +8,9 @@ import {CollisionBoxArray} from '../../array_types.g.ts';
 import {FillBucket} from '../fill_bucket.ts';
 import {ColumnarFillBucket} from './columnar_fill_bucket.ts';
 import {MLTVectorTileLayer} from '../../../source/vector_tile_mlt.ts';
-import {SubdivisionGranularitySetting} from '../../../render/subdivision_granularity_settings.ts';
+import {SubdivisionGranularityExpression, SubdivisionGranularitySetting} from '../../../render/subdivision_granularity_settings.ts';
 
+import type Point from '@mapbox/point-geometry';
 import type {FilterSpecification} from '@maplibre/maplibre-gl-style-spec';
 import type {StructArray} from '../../../util/struct_array.ts';
 import type {Bucket, BucketParameters, IndexedFeature, PopulateParameters} from '../../bucket.ts';
@@ -158,6 +159,129 @@ describe('ColumnarFillBucket on ring-encoded polygons', () => {
         expect(bucket.layoutVertexArray.length).toBeGreaterThan(0);
     });
 });
+
+describe('ColumnarFillBucket on ring-encoded polygons in a tile away from the poles', () => {
+    /** A tile that borders neither edge of the world, so `subdividePolygon()` adds no pole geometry to it. */
+    const INNER_CANONICAL = {z: ZOOM, x: 3, y: 4} as CanonicalTileID;
+
+    /** A multipolygon of a square with a hole and a triangle, and a polygon that reaches past the clamped range. */
+    function encodeMultiPolygons(): Uint8Array {
+        return encodeTile([{
+            name: 'land',
+            extent: 4096,
+            features: [
+                {id: 1, geometry: {type: 'MultiPolygon', coordinates: [
+                    [[[0, 0], [400, 0], [400, 400], [0, 400]], [[100, 100], [100, 300], [300, 300], [300, 100]]],
+                    [[[500, 0], [900, 0], [700, 400]]]
+                ]}, properties: {class: 'a'}},
+                {id: 2, geometry: {type: 'Polygon', coordinates: [[[1000, 1000], [9000, 1000], [9000, 1400], [1000, 1400]]]}, properties: {class: 'b'}}
+            ]
+        }]);
+    }
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    test('draws the same triangles and outlines and indexes the same boxes as FillBucket', () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        for (const table of [decodeTile(encodePolygons())[0], decodeTile(encodeMultiPolygons())[0]]) {
+            const rowOptions = populateOptions();
+            const row = new FillBucket(bucketParameters(createLayer()));
+            row.populate(rowsOf(new MLTVectorTileLayer(table)), rowOptions.options, INNER_CANONICAL);
+            const columnarOptions = populateOptions();
+            const columnar = new ColumnarFillBucket(bucketParameters(createLayer()));
+            columnar.populate(table, columnarOptions.options, INNER_CANONICAL);
+
+            expect(drawn(row).triangles.length).toBeGreaterThan(0);
+            expect(drawn(columnar)).toEqual(drawn(row));
+            expect(columnarOptions.insert.mock.calls.map(call => [call[2], ringBoxes(call[1])]))
+                .toEqual(rowOptions.insert.mock.calls.map(call => [call[2], ringBoxes(call[1])]));
+        }
+    });
+
+    test('indexes a pattern fill, which it writes only later, with the same boxes as FillBucket', () => {
+        const table = decodeTile(encodeMultiPolygons())[0];
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const patternLayer = () => {
+            const layer = new FillStyleLayer({
+                id: 'fill', type: 'fill', source: 's', 'source-layer': 'land', paint: {'fill-pattern': 'stripes'}
+            } as any, {});
+            layer.recalculate(new EvaluationParameters(ZOOM), []);
+            return layer;
+        };
+        /** The boxes of each insert at the time of the call, before anything could fill them in. */
+        const indexedBoxes = (bucket: FillBucket, features: IndexedFeature[] | FeatureTable) => {
+            const {options, insert} = populateOptions();
+            const boxes: number[][][] = [];
+            insert.mockImplementation((_feature, geometry: Point[][]) => boxes.push(ringBoxes(geometry)));
+            bucket.populate(features as any, options, INNER_CANONICAL);
+            expect(bucket.hasDependencies).toBe(true);
+            return boxes;
+        };
+
+        const row = indexedBoxes(new FillBucket(bucketParameters(patternLayer())), rowsOf(new MLTVectorTileLayer(table)));
+        const columnar = indexedBoxes(new ColumnarFillBucket(bucketParameters(patternLayer())), table);
+
+        expect(columnar).toEqual(row);
+        expect(columnar.flat().length).toBeGreaterThan(0);
+    });
+
+    test('writes what FillBucket writes when the tile is subdivided', () => {
+        const table = decodeTile(encodePolygons())[0];
+        const subdivided = new SubdivisionGranularitySetting({
+            fill: new SubdivisionGranularityExpression(128, 2),
+            line: new SubdivisionGranularityExpression(128, 2),
+            tile: new SubdivisionGranularityExpression(128, 2),
+            stencil: new SubdivisionGranularityExpression(128, 2),
+            circle: 3
+        });
+        const rowOptions = populateOptions();
+        rowOptions.options.subdivisionGranularity = subdivided;
+        const row = new FillBucket(bucketParameters(createLayer()));
+        row.populate(rowsOf(new MLTVectorTileLayer(table)), rowOptions.options, INNER_CANONICAL);
+        const columnarOptions = populateOptions();
+        columnarOptions.options.subdivisionGranularity = subdivided;
+        const columnar = new ColumnarFillBucket(bucketParameters(createLayer()));
+        columnar.populate(table, columnarOptions.options, INNER_CANONICAL);
+
+        expect(written(columnar)).toEqual(written(row));
+    });
+});
+
+/**
+ * The triangles and outline edges a fill bucket draws, as coordinates, each in a canonical order, so that
+ * buckets that share vertices differently compare equal. A triangle keeps its winding.
+ */
+function drawn(bucket: FillBucket) {
+    const vertices = bucket.layoutVertexArray.int16;
+    const position = (vertex: number) => `${vertices[vertex * 2]},${vertices[vertex * 2 + 1]}`;
+
+    const triangles: string[] = [];
+    for (const segment of bucket.segments.get()) {
+        for (let i = segment.primitiveOffset; i < segment.primitiveOffset + segment.primitiveLength; i++) {
+            const corners = [0, 1, 2].map(k => position(segment.vertexOffset + bucket.indexArray.uint16[i * 3 + k]));
+            const rotations = [0, 1, 2].map(r => [...corners.slice(r), ...corners.slice(0, r)].join(' '));
+            triangles.push(rotations.sort()[0]);
+        }
+    }
+    const edges: string[] = [];
+    for (const segment of bucket.segments2.get()) {
+        for (let i = segment.primitiveOffset; i < segment.primitiveOffset + segment.primitiveLength; i++) {
+            const ends = [0, 1].map(k => position(segment.vertexOffset + bucket.indexArray2.uint16[i * 2 + k]));
+            edges.push(ends.sort().join(' '));
+        }
+    }
+    return {triangles: triangles.sort(), edges: edges.sort()};
+}
+
+/** The bounding box `FeatureIndex.insert()` computes for each ring it is given. */
+function ringBoxes(geometry: Point[][]): number[][] {
+    return geometry.map(ring => [
+        Math.min(...ring.map(p => p.x)), Math.min(...ring.map(p => p.y)),
+        Math.max(...ring.map(p => p.x)), Math.max(...ring.map(p => p.y)),
+    ]);
+}
 
 describe('FillStyleLayer.createBucket', () => {
     afterEach(() => {
