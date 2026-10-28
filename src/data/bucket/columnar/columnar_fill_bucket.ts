@@ -3,8 +3,7 @@ import {FillBucket} from '../fill_bucket.ts';
 import {warnOnce} from '../../../util/util.ts';
 import {register} from '../../../util/web_worker_transfer.ts';
 import {selectColumnarFeatures, materializeSelectedFeatures, isRowFeatureList, loadGeometryOrEmpty, columnarTransferOmitList} from './columnar_populate.ts';
-import {EXTENT} from '../../extent.ts';
-import {writeTessellatedFill, buildTessellatedBoundingBox, canWriteEarcutFill, writeEarcutFill, buildRingBoundingBoxes} from './columnar_mesh_arrays.ts';
+import {writeTessellatedFill, reserveTessellatedFill, buildTessellatedBoundingBox, extentScale, canWriteEarcutFill, writeEarcutFill, reserveEarcutFill, buildRingBoundingBoxes} from './columnar_mesh_arrays.ts';
 import {hasRingTopology, MLTVectorTileLayer} from '../../../source/vector_tile_mlt.ts';
 
 import type Point from '@mapbox/point-geometry';
@@ -50,7 +49,7 @@ export class ColumnarFillBucket extends FillBucket {
         }
         const granularity = options.subdivisionGranularity.fill.getGranularityForZoomLevel(canonical.z);
         const isEarcut = geometryVector instanceof GeometryVector && canWriteEarcutFill(geometryVector, canonical, granularity);
-        this.direct = isTessellated || isEarcut ? {geometryVector, scale: EXTENT / featureTable.extent} : undefined;
+        this.direct = isTessellated || isEarcut ? {geometryVector, scale: extentScale(featureTable.extent)} : undefined;
 
         const fillSortKey = layer.layout.get('fill-sort-key');
         const sourceLayer = new MLTVectorTileLayer(featureTable);
@@ -64,6 +63,8 @@ export class ColumnarFillBucket extends FillBucket {
                 : (bucketFeature) => fillSortKey.evaluate(bucketFeature, {}, canonical, options.availableImages),
         });
 
+        if (isTessellated) reserveTessellatedFill(this, geometryVector, bucketFeatures);
+        else if (isEarcut) reserveEarcutFill(this, geometryVector, bucketFeatures);
         this.addBucketFeatures(bucketFeatures, index => sourceFeatures[index], options, canonical);
         if (!this.hasDependencies) this.releaseDirectGeometry();
     }

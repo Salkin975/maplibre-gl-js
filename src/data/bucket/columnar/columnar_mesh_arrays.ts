@@ -1,6 +1,7 @@
 import Point from '@mapbox/point-geometry';
 import earcut from 'earcut';
 import {clamp, warnOnce} from '../../../util/util.ts';
+import {EXTENT} from '../../extent.ts';
 import {SegmentVector} from '../../segment.ts';
 import {tessellatedVertexBase} from '../../../source/vector_tile_mlt.ts';
 import {fixWindingOrder} from '../../../render/subdivision.ts';
@@ -48,16 +49,38 @@ const MIN_COORDINATE = -MAX_COORDINATE - 1;
 /** The most rings one polygon is triangulated with, the limit `FillBucket` hands `classifyRings()`. */
 const EARCUT_MAX_RINGS = 500;
 
-/**
- * Scales one coordinate into the internal `EXTENT` and clamps it, matching `loadGeometry()`'s per-point
- * transform, including its warning when the coordinate had to be clamped by more than a unit.
- */
+/** The factor that carries a coordinate of a layer with the given extent into the internal `EXTENT`. */
+export function extentScale(extent: number): number {
+    return EXTENT / extent;
+}
+
+/** Scales one coordinate and clamps it, matching `loadGeometry()`'s per-point transform. */
 function scaleCoordinate(value: number, scale: number): number {
-    const scaled = Math.round(value * scale);
-    if (scaled < MIN_COORDINATE || scaled > MAX_COORDINATE + 1) {
-        warnOnce('Geometry exceeds allowed extent');
+    return clamp(Math.round(value * scale), MIN_COORDINATE, MAX_COORDINATE);
+}
+
+/**
+ * Appends the vertices `[start, end)` of `vertexBuffer`, a flat list of x and y, to `layoutVertexArray`
+ * scaled by `scale`, with the same result as {@link scaleCoordinate} for each coordinate.
+ *
+ * An integer scale, which is what every layer whose extent divides `EXTENT` has, keeps whole numbers
+ * whole, so the rounding is left out and the clamp is two comparisons.
+ */
+function appendScaledVertices(layoutVertexArray: FillLayoutArray, vertexBuffer: Int32Array | Uint32Array, start: number, end: number, scale: number): void {
+    if (!Number.isInteger(scale)) {
+        for (let v = start; v < end; v += 2) {
+            layoutVertexArray.emplaceBack(scaleCoordinate(vertexBuffer[v], scale), scaleCoordinate(vertexBuffer[v + 1], scale));
+        }
+        return;
     }
-    return clamp(scaled, MIN_COORDINATE, MAX_COORDINATE);
+
+    for (let v = start; v < end; v += 2) {
+        const x = vertexBuffer[v] * scale;
+        const y = vertexBuffer[v + 1] * scale;
+        layoutVertexArray.emplaceBack(
+            x > MAX_COORDINATE ? MAX_COORDINATE : x < MIN_COORDINATE ? MIN_COORDINATE : x,
+            y > MAX_COORDINATE ? MAX_COORDINATE : y < MIN_COORDINATE ? MIN_COORDINATE : y);
+    }
 }
 
 /**
@@ -206,9 +229,7 @@ export function writeTessellatedFill(target: FillMeshTarget, geometryVector: Gpu
     const lineBase = lineSegment.vertexLength;
     lineSegment.vertexLength += numVertices;
 
-    for (let v = vertexBase * 2; v < (vertexBase + numVertices) * 2; v += 2) {
-        layoutVertexArray.emplaceBack(scaleCoordinate(vertexBuffer[v], scale), scaleCoordinate(vertexBuffer[v + 1], scale));
-    }
+    appendScaledVertices(layoutVertexArray, vertexBuffer, vertexBase * 2, (vertexBase + numVertices) * 2, scale);
 
     for (let ring = firstRing; ring < endRing; ring++) {
         const start = lineBase + ringOffsets[ring] - vertexBase;
@@ -217,6 +238,53 @@ export function writeTessellatedFill(target: FillMeshTarget, geometryVector: Gpu
         indexArray2.emplaceBack(end - 1, start);
         lineSegment.primitiveLength += end - start;
     }
+}
+
+/**
+ * Makes room in the arrays of a fill bucket for `features` of a pre-tessellated layer, so that writing
+ * them does not grow the arrays step by step.
+ *
+ * The triangle count comes from the layer's triangle offsets and the vertex and outline-edge counts from
+ * its ring offsets, so no pass over the geometry is needed. A layer without ring topology only gets its
+ * triangle index array sized, since its vertex count is not stored.
+ */
+export function reserveTessellatedFill(target: FillMeshTarget, geometryVector: GpuVector, features: ReadonlyArray<{index: number}>): void {
+    const {triangleOffsets, topologyVector} = geometryVector;
+    const ringOffsets = topologyVector?.ringOffsets;
+    let triangles = 0;
+    let vertices = 0;
+    for (const {index} of features) {
+        triangles += triangleOffsets[index + 1] - triangleOffsets[index];
+        if (ringOffsets) vertices += ringOffsets[endRingOf(topologyVector, index)] - ringOffsets[firstRingOf(topologyVector, index)];
+    }
+    target.indexArray.reserve(target.indexArray.length + triangles);
+    if (!ringOffsets) return;
+
+    target.layoutVertexArray.reserve(target.layoutVertexArray.length + vertices);
+    target.indexArray2.reserve(target.indexArray2.length + vertices);
+}
+
+/**
+ * Makes room in the arrays of a fill bucket for the polygons `features` of `geometryVector`, which
+ * {@link writeEarcutFill} writes, so that writing them does not grow the arrays step by step.
+ *
+ * The counts come from the ring offsets: every ring is written closed, so with one vertex more, and has
+ * one outline edge per stored vertex. Earcut makes about one triangle per vertex, which is the estimate.
+ */
+export function reserveEarcutFill(target: FillMeshTarget, geometryVector: GeometryVector, features: ReadonlyArray<{index: number}>): void {
+    const {topologyVector} = geometryVector;
+    const ringOffsets = topologyVector.ringOffsets;
+    let vertices = 0;
+    let rings = 0;
+    for (const {index} of features) {
+        const firstRing = firstRingOf(topologyVector, index);
+        const endRing = endRingOf(topologyVector, index);
+        vertices += ringOffsets[endRing] - ringOffsets[firstRing];
+        rings += endRing - firstRing;
+    }
+    target.layoutVertexArray.reserve(target.layoutVertexArray.length + vertices + rings);
+    target.indexArray.reserve(target.indexArray.length + vertices + rings);
+    target.indexArray2.reserve(target.indexArray2.length + vertices);
 }
 
 /**
@@ -269,12 +337,21 @@ function readScaledRings(geometryVector: GeometryVector, index: number, scale: n
         const first = coordinates.length;
         for (let vertex = start; vertex < end; vertex++) {
             const offset = (vertexOffsets ? vertexOffsets[vertex] : vertex) * 2;
-            coordinates.push(scaleCoordinate(vertexBuffer[offset], scale), scaleCoordinate(vertexBuffer[offset + 1], scale));
+            coordinates.push(scaleCheckedCoordinate(vertexBuffer[offset], scale), scaleCheckedCoordinate(vertexBuffer[offset + 1], scale));
         }
         coordinates.push(coordinates[first], coordinates[first + 1]);
     }
     ringStarts.push(coordinates.length / 2);
     return {coordinates, ringStarts};
+}
+
+/** {@link scaleCoordinate}, warning like `loadGeometry()` when the coordinate had to be clamped by more than a unit. */
+function scaleCheckedCoordinate(value: number, scale: number): number {
+    const scaled = Math.round(value * scale);
+    if (scaled < MIN_COORDINATE || scaled > MAX_COORDINATE + 1) {
+        warnOnce('Geometry exceeds allowed extent, reduce your vector tile buffer size');
+    }
+    return clamp(scaled, MIN_COORDINATE, MAX_COORDINATE);
 }
 
 /**
