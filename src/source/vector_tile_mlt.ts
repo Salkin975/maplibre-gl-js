@@ -153,6 +153,10 @@ function inferVertexBases(geometryVector: GpuVector): Uint32Array {
  * Returns a feature's triangles, each closed into a ring of its own. A layer without ring topology
  * stores nothing else of a polygon, and the triangles cover the same area as its rings, so
  * `queryRenderedFeatures` hits the same features.
+ *
+ * Every ring winds the way an MVT exterior ring does, whichever way the tile wound its triangle:
+ * `classifyRings()` takes a ring that winds against the first one for a hole in the polygon before it,
+ * and a fill bucket would then cut the triangle out of its neighbour instead of filling it.
  */
 function trianglesAsRings(geometryVector: GpuVector, index: number): Point[][] {
     const {triangleOffsets, indexBuffer} = geometryVector;
@@ -163,6 +167,8 @@ function trianglesAsRings(geometryVector: GpuVector, index: number): Point[][] {
             const [x, y] = geometryVector.getVertex(vertexBase + indexBuffer[i + corner]);
             return new Point(x, y);
         });
+        const [a, b, c] = ring;
+        if ((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x) < 0) ring.reverse();
         ring.push(ring[0].clone());
         rings.push(ring);
     }

@@ -1,6 +1,7 @@
 import {describe, test, expect, vi, afterEach} from 'vitest';
 import {readFileSync} from 'fs';
 import path from 'path';
+import {classifyRings} from '@maplibre/maplibre-gl-style-spec';
 import {GEOMETRY_TYPE, FeatureTable, createFlatGpuVector, decodeTile, encodeTile} from '@maplibre/mlt';
 import {MLTVectorTile, MLTVectorTileLayer, hasRingTopology, isMLTVectorTileLayer, tessellatedVertexBase} from './vector_tile_mlt';
 
@@ -184,6 +185,22 @@ describe('MLTVectorTileLayer on a pre-tessellated layer', () => {
         // Every triangle is a ring of its own, closed by repeating its first corner.
         expect(triangle[0]).toMatchObject([{x: 200, y: 0}, {x: 300, y: 0}, {x: 250, y: 100}, {x: 200, y: 0}]);
         expect(square[1]).toMatchObject([{x: 0, y: 0}, {x: 100, y: 100}, {x: 0, y: 100}, {x: 0, y: 0}]);
+    });
+
+    test('winds every triangle as an exterior ring, so that each one stays a polygon of its own', () => {
+        const square = createFlatGpuVector(
+            new Uint32Array([GEOMETRY_TYPE.POLYGON]),
+            new Uint32Array([0, 2]),
+            // The second triangle winds against the first.
+            new Uint32Array([0, 1, 2, 0, 3, 2]),
+            new Int32Array([0, 0, 100, 0, 100, 100, 0, 100])
+        );
+        const layer = new MLTVectorTileLayer(new FeatureTable('land', square, undefined, [], 4096, 1));
+
+        const polygons = classifyRings(layer.feature(0).loadGeometry());
+
+        expect(polygons).toHaveLength(2);
+        expect(polygons.every(polygon => polygon.length === 1)).toBe(true);
     });
 
     test('finds where the vertices of a feature start when the tile does not say', () => {

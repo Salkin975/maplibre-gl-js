@@ -1,14 +1,14 @@
-import {GeometryVector, GpuVector, SINGLE_PART_GEOMETRY_TYPE} from '@maplibre/mlt';
+import {GeometryVector, GpuVector} from '@maplibre/mlt';
 import {FillBucket} from '../fill_bucket.ts';
 import {warnOnce} from '../../../util/util.ts';
 import {register} from '../../../util/web_worker_transfer.ts';
 import {selectColumnarFeatures, materializeSelectedFeatures, isRowFeatureList, loadGeometryOrEmpty, columnarTransferOmitList} from './columnar_populate.ts';
 import {writeTessellatedFill, reserveTessellatedFill, buildTessellatedBoundingBox, extentScale, canWriteEarcutFill, writeEarcutFill, reserveEarcutFill, buildRingBoundingBoxes} from './columnar_mesh_arrays.ts';
-import {hasRingTopology, MLTVectorTileLayer} from '../../../source/vector_tile_mlt.ts';
+import {hasRingTopology} from '../../../source/vector_tile_mlt.ts';
 
 import type Point from '@mapbox/point-geometry';
-import type {FeatureTable} from '@maplibre/mlt';
 import type {VectorTileFeatureLike} from '@maplibre/vt-pbf';
+import type {MLTVectorTileLayer} from '../../../source/vector_tile_mlt.ts';
 import type {CanonicalTileID} from '../../../tile/tile_id.ts';
 import type {ImagePosition} from '../../../render/image_atlas.ts';
 import type {BucketParameters, BucketDependencyParameters, BucketFeature, IndexedFeature, PopulateParameters} from '../../bucket.ts';
@@ -20,7 +20,8 @@ import type {SubdivisionGranularitySetting} from '../../../render/subdivision_gr
  * from the table's vertex buffer: a pre-tessellated tile's triangles come from the tile's own mesh, and
  * any other tile's polygons are triangulated by earcut on the buffer, without making a point of each
  * vertex. A tile that `subdividePolygon()` would change - on the globe, or at the edge of the world - is
- * triangulated by `FillBucket`. Sorting, pattern handling and indexing are `FillBucket`'s own.
+ * triangulated by `FillBucket`, and so is a line or point, which `FillBucket` fills as the area it
+ * encloses. Sorting, pattern handling and indexing are `FillBucket`'s own.
  */
 export class ColumnarFillBucket extends FillBucket {
     isColumnar = true;
@@ -34,12 +35,13 @@ export class ColumnarFillBucket extends FillBucket {
         this.sourceLayerIndex = options.sourceLayerIndex;
     }
 
-    populate(features: IndexedFeature[] | FeatureTable, options: PopulateParameters, canonical: CanonicalTileID): void {
+    populate(features: IndexedFeature[] | MLTVectorTileLayer, options: PopulateParameters, canonical: CanonicalTileID): void {
         if (isRowFeatureList(features)) {
             super.populate(features, options, canonical);
             return;
         }
-        const featureTable = features;
+        const sourceLayer = features;
+        const {featureTable} = sourceLayer;
         const layer = this.layers[0];
 
         const geometryVector = featureTable.geometryVector;
@@ -52,10 +54,9 @@ export class ColumnarFillBucket extends FillBucket {
         this.direct = isTessellated || isEarcut ? {geometryVector, scale: extentScale(featureTable.extent)} : undefined;
 
         const fillSortKey = layer.layout.get('fill-sort-key');
-        const sourceLayer = new MLTVectorTileLayer(featureTable);
-        const selection = selectColumnarFeatures(featureTable, layer.filter, this.zoom, [SINGLE_PART_GEOMETRY_TYPE.POLYGON]);
+        const selection = selectColumnarFeatures(featureTable, layer.filter, this.zoom);
         const sourceFeatures: VectorTileFeatureLike[] = [];
-        const bucketFeatures = materializeSelectedFeatures(sourceLayer, selection, this.sourceLayerIndex, {
+        const bucketFeatures = materializeSelectedFeatures(sourceLayer, selection, this.sourceLayerIndex, options.featureIndex, {
             features: sourceFeatures,
             resolveGeometry: (feature, index) => this.indexedGeometry(feature, index),
             sortKey: fillSortKey.isConstant()
@@ -64,7 +65,7 @@ export class ColumnarFillBucket extends FillBucket {
         });
 
         if (isTessellated) reserveTessellatedFill(this, geometryVector, bucketFeatures);
-        else if (isEarcut) reserveEarcutFill(this, geometryVector, bucketFeatures);
+        else if (isEarcut) reserveEarcutFill(this, geometryVector, bucketFeatures.filter(isPolygon));
         this.addBucketFeatures(bucketFeatures, index => sourceFeatures[index], options, canonical);
         if (!this.hasDependencies) this.releaseDirectGeometry();
     }
@@ -75,12 +76,12 @@ export class ColumnarFillBucket extends FillBucket {
     }
 
     /**
-     * Writes a feature straight from the tile's geometry when the bucket does so, see the class; its
+     * Writes a polygon straight from the tile's geometry when the bucket does so, see the class; its
      * `geometry` is then only the bounding boxes `FeatureIndex` needs. Any other feature is triangulated
      * by `FillBucket`.
      */
     addFeature(feature: BucketFeature, geometry: Point[][], index: number, canonical: CanonicalTileID, imagePositions: Record<string, ImagePosition>, subdivisionGranularity: SubdivisionGranularitySetting): void {
-        if (!this.direct) {
+        if (!this.direct || !isPolygon(feature)) {
             super.addFeature(feature, geometry, index, canonical, imagePositions, subdivisionGranularity);
             return;
         }
@@ -96,7 +97,7 @@ export class ColumnarFillBucket extends FillBucket {
      * bucket writes it straight from the tile's geometry, else its rings.
      */
     private indexedGeometry(feature: VectorTileFeatureLike, index: number): Point[][] {
-        if (!this.direct) return loadGeometryOrEmpty(feature, index);
+        if (!this.direct || !isPolygon(feature)) return loadGeometryOrEmpty(feature, index);
 
         const {geometryVector, scale} = this.direct;
         return geometryVector instanceof GpuVector ?
@@ -113,6 +114,11 @@ export class ColumnarFillBucket extends FillBucket {
     private releaseDirectGeometry(): void {
         this.direct = undefined;
     }
+}
+
+/** Whether a feature is a polygon, the only geometry the bucket writes straight from the tile. */
+function isPolygon(feature: {type: VectorTileFeatureLike['type']}): boolean {
+    return feature.type === 3;
 }
 
 register('ColumnarFillBucket', ColumnarFillBucket, {omit: columnarTransferOmitList<ColumnarFillBucket>(['layers', 'patternFeatures'])});
