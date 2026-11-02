@@ -6,12 +6,14 @@ import {CollisionBoxArray} from '../../array_types.g.ts';
 import {SymbolBucket} from '../symbol_bucket.ts';
 import {ColumnarSymbolBucket} from './columnar_symbol_bucket.ts';
 import {MLTVectorTileLayer} from '../../../source/vector_tile_mlt.ts';
+import {FeatureIndex} from '../../feature_index.ts';
+import {OverscaledTileID} from '../../../tile/tile_id.ts';
 import {createPopulateOptions} from '../../../../test/unit/lib/tile.ts';
 
 import type {FeatureTable} from '@maplibre/mlt';
 import type {Formatted} from '@maplibre/maplibre-gl-style-spec';
 import type {FilterSpecification} from '@maplibre/maplibre-gl-style-spec';
-import type {BucketParameters, IndexedFeature} from '../../bucket.ts';
+import type {BucketParameters, IndexedFeature, PopulateParameters} from '../../bucket.ts';
 import type {CanonicalTileID} from '../../../tile/tile_id.ts';
 
 const ZOOM = 5;
@@ -60,13 +62,8 @@ function populateBoth(table: FeatureTable, filter?: FilterSpecification, layout:
 
     const columnarOptions = createPopulateOptions([]);
     const columnar = new ColumnarSymbolBucket(bucketParameters(createLayer(filter, layout)));
-    columnar.populate(table, columnarOptions, CANONICAL);
+    columnar.populate(new MLTVectorTileLayer(table), columnarOptions, CANONICAL);
 
-    const summarize = (bucket: SymbolBucket, options: typeof rowOptions) => ({
-        features: bucket.features.map(f => ({...f, text: (f.text as Formatted | undefined)?.toString(), icon: f.icon?.name})),
-        icons: options.iconDependencies,
-        glyphs: options.glyphDependencies
-    });
     return {row: summarize(row, rowOptions), columnar: summarize(columnar, columnarOptions)};
 }
 
@@ -101,6 +98,16 @@ describe('ColumnarSymbolBucket', () => {
         expect(columnar.features).toHaveLength(1);
     });
 
+    test('takes the ids from the promoteId of the source', () => {
+        const options = createPopulateOptions([]);
+        options.featureIndex = new FeatureIndex(new OverscaledTileID(0, 0, 0, 0, 0), 'name');
+        const bucket = new ColumnarSymbolBucket(bucketParameters(createLayer(['==', 'class', 'b'])));
+
+        bucket.populate(new MLTVectorTileLayer(decodeTile(encodeFeatures())[0]), options, CANONICAL);
+
+        expect(bucket.features.map(f => f.id)).toEqual(['Bonn']);
+    });
+
     test('populates from a row list through SymbolBucket when it is given one', () => {
         const table = decodeTile(encodeFeatures())[0];
         const options = createPopulateOptions([]);
@@ -111,3 +118,12 @@ describe('ColumnarSymbolBucket', () => {
         expect(bucket.features).toHaveLength(5);
     });
 });
+
+/** What a symbol bucket selected and resolved, and what it asked the main thread for. */
+function summarize(bucket: SymbolBucket, options: PopulateParameters) {
+    return {
+        features: bucket.features.map(f => ({...f, text: (f.text as Formatted | undefined)?.toString(), icon: f.icon?.name})),
+        icons: options.iconDependencies,
+        glyphs: options.glyphDependencies
+    };
+}
