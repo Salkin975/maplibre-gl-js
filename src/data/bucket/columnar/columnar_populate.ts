@@ -7,13 +7,14 @@ import type {FilterSpecification} from '@maplibre/maplibre-gl-style-spec';
 import type {VectorTileFeatureLike} from '@maplibre/vt-pbf';
 import type {FeatureTable, SelectionVector, SINGLE_PART_GEOMETRY_TYPE} from '@maplibre/mlt';
 import type {BucketFeature, IndexedFeature} from '../../bucket.ts';
+import type {FeatureIndex} from '../../feature_index.ts';
 import type {MLTVectorTileLayer} from '../../../source/vector_tile_mlt.ts';
 
 /** Resolves one feature's rendered geometry. The default, `loadGeometryOrEmpty`, is a full ring decode. */
 export type GeometryResolver = (feature: VectorTileFeatureLike, index: number) => Point[][];
 
-/** Distinguishes `populate()`'s row-based `IndexedFeature[]` input from its columnar `FeatureTable` input. */
-export function isRowFeatureList(features: IndexedFeature[] | FeatureTable): features is IndexedFeature[] {
+/** Distinguishes `populate()`'s row-based `IndexedFeature[]` input from its columnar `MLTVectorTileLayer` input. */
+export function isRowFeatureList(features: IndexedFeature[] | MLTVectorTileLayer): features is IndexedFeature[] {
     return Array.isArray(features);
 }
 
@@ -62,7 +63,8 @@ export function loadGeometryOrEmpty(feature: VectorTileFeatureLike, _index: numb
 
 /**
  * Materializes every feature `selection` selects out of `sourceLayer` into a `BucketFeature`, with its
- * `sortKey` evaluated when one is given.
+ * `sortKey` evaluated when one is given. A feature's id is the one `featureIndex` resolves, which honours
+ * the source's `promoteId`, so that feature state finds the feature.
  *
  * `resolveGeometry` defaults to a full ring decode; pass a cheaper resolver (e.g. a bounding box) when
  * the bucket's write step never reads the geometry back.
@@ -71,6 +73,7 @@ export function materializeSelectedFeatures(
     sourceLayer: MLTVectorTileLayer,
     selection: SelectionVector,
     sourceLayerIndex: number,
+    featureIndex: FeatureIndex,
     options: {
         resolveGeometry?: GeometryResolver;
         /** Gives each feature a `dashes` object, which the line bucket's dash handling assumes is present. */
@@ -85,7 +88,7 @@ export function materializeSelectedFeatures(
         const index = selection.getIndex(i);
         const feature = sourceLayer.feature(index);
         const bucketFeature: BucketFeature = {
-            id: feature.id,
+            id: featureIndex.getId(feature, sourceLayer.name),
             properties: feature.properties,
             type: feature.type,
             index,
