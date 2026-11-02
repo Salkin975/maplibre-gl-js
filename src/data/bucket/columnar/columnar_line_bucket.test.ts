@@ -6,6 +6,8 @@ import {CollisionBoxArray} from '../../array_types.g.ts';
 import {LineBucket} from '../line_bucket.ts';
 import {ColumnarLineBucket} from './columnar_line_bucket.ts';
 import {MLTVectorTileLayer} from '../../../source/vector_tile_mlt.ts';
+import {FeatureIndex} from '../../feature_index.ts';
+import {OverscaledTileID} from '../../../tile/tile_id.ts';
 import {SubdivisionGranularitySetting} from '../../../render/subdivision_granularity_settings.ts';
 
 import type {FeatureTable} from '@maplibre/mlt';
@@ -46,9 +48,10 @@ function bucketParameters(layer: LineStyleLayer): BucketParameters<LineStyleLaye
 }
 
 function populateOptions() {
-    const insert = vi.fn();
+    const featureIndex = new FeatureIndex(new OverscaledTileID(ZOOM, 0, ZOOM, 0, 0));
+    const insert = vi.spyOn(featureIndex, 'insert').mockImplementation(() => {});
     const options = {
-        featureIndex: {insert},
+        featureIndex,
         iconDependencies: {}, patternDependencies: {}, glyphDependencies: {}, dashDependencies: {},
         availableImages: [], subdivisionGranularity: SubdivisionGranularitySetting.noSubdivision
     } as unknown as PopulateParameters;
@@ -82,7 +85,7 @@ function populateBoth(table: FeatureTable, filter?: FilterSpecification, layout:
 
     const columnar = new ColumnarLineBucket(bucketParameters(createLayer(filter, layout)));
     const columnarOptions = populateOptions();
-    columnar.populate(table, columnarOptions.options, CANONICAL);
+    columnar.populate(sourceLayer, columnarOptions.options, CANONICAL);
 
     return {
         row: {...written(row), indexed: rowOptions.insert.mock.calls.map(call => call[2])},

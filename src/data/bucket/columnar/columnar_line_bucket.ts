@@ -2,13 +2,13 @@ import {GpuVector, SINGLE_PART_GEOMETRY_TYPE} from '@maplibre/mlt';
 import {LineBucket} from '../line_bucket.ts';
 import {warnOnce} from '../../../util/util.ts';
 import {register} from '../../../util/web_worker_transfer.ts';
-import {hasRingTopology, MLTVectorTileLayer} from '../../../source/vector_tile_mlt.ts';
+import {hasRingTopology} from '../../../source/vector_tile_mlt.ts';
 import {selectColumnarFeatures, materializeSelectedFeatures, isRowFeatureList, columnarTransferOmitList} from './columnar_populate.ts';
 
-import type {FeatureTable} from '@maplibre/mlt';
 import type {CanonicalTileID} from '../../../tile/tile_id.ts';
 import type {BucketParameters, IndexedFeature, PopulateParameters} from '../../bucket.ts';
 import type {LineStyleLayer} from '../../../style/style_layer/line_style_layer.ts';
+import type {MLTVectorTileLayer} from '../../../source/vector_tile_mlt.ts';
 
 /**
  * A `LineBucket` that selects its features from an MLT feature table's columns; writing them is
@@ -27,12 +27,13 @@ export class ColumnarLineBucket extends LineBucket {
         this.sourceLayerIndex = options.sourceLayerIndex;
     }
 
-    populate(features: IndexedFeature[] | FeatureTable, options: PopulateParameters, canonical: CanonicalTileID): void {
+    populate(features: IndexedFeature[] | MLTVectorTileLayer, options: PopulateParameters, canonical: CanonicalTileID): void {
         if (isRowFeatureList(features)) {
             super.populate(features, options, canonical);
             return;
         }
-        const featureTable = features;
+        const sourceLayer = features;
+        const {featureTable} = sourceLayer;
         const layer = this.layers[0];
 
         const geometryVector = featureTable.geometryVector;
@@ -42,12 +43,11 @@ export class ColumnarLineBucket extends LineBucket {
         }
 
         const lineSortKey = layer.layout.get('line-sort-key');
-        const sourceLayer = new MLTVectorTileLayer(featureTable);
         const selection = selectColumnarFeatures(featureTable, layer.filter, this.zoom, [
             SINGLE_PART_GEOMETRY_TYPE.LINESTRING,
             SINGLE_PART_GEOMETRY_TYPE.POLYGON,
         ]);
-        const bucketFeatures = materializeSelectedFeatures(sourceLayer, selection, this.sourceLayerIndex, {
+        const bucketFeatures = materializeSelectedFeatures(sourceLayer, selection, this.sourceLayerIndex, options.featureIndex, {
             hasDashes: true,
             sortKey: lineSortKey.isConstant() ? undefined : (bucketFeature) => lineSortKey.evaluate(bucketFeature, {}, canonical),
         });
