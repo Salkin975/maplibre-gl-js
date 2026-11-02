@@ -10,6 +10,7 @@ import {StyleLayerIndex} from '../style/style_layer_index.ts';
 import {OverscaledTileID} from '../tile/tile_id.ts';
 import {SubdivisionGranularitySetting} from '../render/subdivision_granularity_settings.ts';
 import {actor} from '../../test/bench/lib/parse_tile.ts';
+import {LOG_WORKER_TIMING} from './worker_timing.ts';
 
 import type {StyleSpecification} from '@maplibre/maplibre-gl-style-spec';
 import type {VectorTileLike} from '@maplibre/vt-pbf';
@@ -111,6 +112,7 @@ async function parseVariant(variant: Variant): Promise<void> {
 
 /** Takes the layers of every tile the worker timing log holds, and leaves the log empty. */
 function drainTimingLog(): LayerTiming[] {
+    if (!LOG_WORKER_TIMING) throw new Error('the workers log no tiles; switch LOG_WORKER_TIMING on in src/source/worker_timing.ts');
     const log: string[] = (globalThis as any).__workerTimingLog ?? [];
     (globalThis as any).__workerTimingLog = [];
     return log.flatMap(line => JSON.parse(line).layers);

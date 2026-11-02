@@ -132,7 +132,7 @@ export class WorkerTile {
                     sourceID: this.source
                 });
                 const timing = timings.layer(layer.id, layer.type, sourceLayerId, sourceLayer.length, !!bucket.isColumnar);
-                timing.createBucket = timings.now() - createStart;
+                timing.createBucket = timings.elapsed(createStart);
 
                 // A bucket that is not columnar must not get the table, even for an MLT layer: its filter
                 // may not be plannable, in which case createBucket() returned a row-based bucket.
@@ -144,7 +144,7 @@ export class WorkerTile {
                 }
                 const populateStart = timings.now();
                 bucket.populate(populateFeatures, options, this.tileID.canonical);
-                timing.populate = timings.now() - populateStart;
+                timing.populate = timings.elapsed(populateStart);
                 timing.phases = takePhases();
                 featureIndex.bucketLayerIDs.push(family.map((l) => l.id));
             }

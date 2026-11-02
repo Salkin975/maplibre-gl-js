@@ -136,7 +136,7 @@ describe('ColumnarLineBucket', () => {
         const {options, insert} = populateOptions();
         const bucket = new ColumnarLineBucket(bucketParameters(createLayer()));
 
-        bucket.populate(decodeTile(encodeFeatures())[0], options, CANONICAL);
+        bucket.populate(new MLTVectorTileLayer(decodeTile(encodeFeatures())[0]), options, CANONICAL);
 
         expect(feature).toHaveBeenCalledTimes(3);
         expect(insert.mock.calls.map(call => call[0])).toEqual(feature.mock.results.map(result => result.value));
@@ -154,7 +154,7 @@ describe('ColumnarLineBucket', () => {
         row.populate(rowsOf(new MLTVectorTileLayer(table)), populateOptions().options, CANONICAL);
         const columnar = new ColumnarLineBucket(bucketParameters(createLayer()));
 
-        columnar.populate(table, populateOptions().options, CANONICAL);
+        columnar.populate(new MLTVectorTileLayer(table), populateOptions().options, CANONICAL);
 
         expect(columnar.lineClipsArray).toEqual([{start: 0.25, end: 0.75}]);
         expect(bytes(columnar.layoutVertexArray2)).toEqual(bytes(row.layoutVertexArray2));
