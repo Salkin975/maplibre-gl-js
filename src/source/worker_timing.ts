@@ -1,5 +1,9 @@
-/** Switches the per-tile timing lines that `WorkerTile.parse()` appends to the worker's timing log. */
-export const LOG_WORKER_TIMING = true;
+/**
+ * Switches the per-tile timing lines that `WorkerTile.parse()` appends to the worker's timing log, and
+ * with them every clock read the timing takes. A benchmark build switches it on; while it is off, the
+ * timing reads no clock and keeps no log.
+ */
+export const LOG_WORKER_TIMING = false;
 
 /** The most lines the worker keeps for a reader that has not collected them yet. */
 const MAX_LOGGED_TILES = 5000;
@@ -11,8 +15,14 @@ const MAX_LOGGED_TILES = 5000;
  */
 const phases: Record<string, number> = {};
 
-/** Adds the time since `since`, a value from `performance.now()`, to the named phase of the bucket being populated. */
+/** Returns the time a phase starts at, to be handed to {@link addPhase}; 0 while the timing is off. */
+export function phaseStart(): number {
+    return LOG_WORKER_TIMING ? performance.now() : 0;
+}
+
+/** Adds the time since `since`, a value from {@link phaseStart}, to the named phase of the bucket being populated. */
 export function addPhase(name: string, since: number): void {
+    if (!LOG_WORKER_TIMING) return;
     phases[name] = (phases[name] ?? 0) + performance.now() - since;
 }
 
@@ -54,19 +64,24 @@ export class TileTimings {
 
     /** Returns the current time, to be handed back to one of the `add*` methods as `since`. */
     now(): number {
-        return performance.now();
+        return phaseStart();
+    }
+
+    /** The milliseconds since `since`; 0 while the timing is off. */
+    elapsed(since: number): number {
+        return LOG_WORKER_TIMING ? performance.now() - since : 0;
     }
 
     addSourceLayerAccess(since: number): void {
-        this.sourceLayerAccess += performance.now() - since;
+        this.sourceLayerAccess += this.elapsed(since);
     }
 
     addRowBuild(since: number): void {
-        this.rowBuild += performance.now() - since;
+        this.rowBuild += this.elapsed(since);
     }
 
     addDependencies(since: number): void {
-        this.dependencies += performance.now() - since;
+        this.dependencies += this.elapsed(since);
     }
 
     /** Starts the row for a layer's bucket and returns it, so the phases that follow add to it. */
@@ -79,7 +94,7 @@ export class TileTimings {
     /** Adds the time of the dependency-resolved layout pass to the layer it belongs to. */
     addFeatures(id: string, since: number): void {
         const timing = this.layers.get(id);
-        if (timing) timing.addFeatures += performance.now() - since;
+        if (timing) timing.addFeatures += this.elapsed(since);
     }
 
     /** Appends the tile's line: the total, the tile-level phases and one entry per layer. */

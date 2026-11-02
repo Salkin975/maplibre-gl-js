@@ -150,7 +150,7 @@ export class WorkerTile {
                 }
                 buckets[layer.id] = bucket;
                 const timing = timings.layer(layer.id, layer.type, sourceLayerId, sourceLayer.length, !!bucket.isColumnar);
-                timing.createBucket = timings.now() - createStart;
+                timing.createBucket = timings.elapsed(createStart);
 
                 let populateFeatures: IndexedFeature[] | MLTVectorTileLayer = features;
                 if (mltLayer) {
@@ -160,7 +160,7 @@ export class WorkerTile {
                 }
                 const populateStart = timings.now();
                 bucket.populate(populateFeatures, options, this.tileID.canonical);
-                timing.populate = timings.now() - populateStart;
+                timing.populate = timings.elapsed(populateStart);
                 timing.phases = takePhases();
                 featureIndex.bucketLayerIDs.push(family.map((l) => l.id));
             }

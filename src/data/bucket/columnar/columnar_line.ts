@@ -3,7 +3,7 @@ import {GEOJSONVT_CLIP_END, GEOJSONVT_CLIP_START} from '@maplibre/geojson-vt';
 import {warnOnce} from '../../../util/util.ts';
 import {hasRingTopology, isPreTessellated} from '../../../source/vector_tile_mlt.ts';
 import {selectColumnarFeatures, materializeSelectedFeatures} from './columnar_populate.ts';
-import {addPhase} from '../../../source/worker_timing.ts';
+import {addPhase, phaseStart} from '../../../source/worker_timing.ts';
 
 import type {FeatureTable, SelectionVector} from '@maplibre/mlt';
 import type {FilterSpecification} from '@maplibre/maplibre-gl-style-spec';
@@ -42,7 +42,7 @@ export function populateColumnarLine(bucket: LineBucket, sourceLayer: MLTVectorT
 
     bucket.hasLineClipColumns = !!featureTable.getPropertyVector(GEOJSONVT_CLIP_START) && !!featureTable.getPropertyVector(GEOJSONVT_CLIP_END);
     const lineSortKey = layer.layout.get('line-sort-key');
-    const selectStart = performance.now();
+    const selectStart = phaseStart();
     const selection = selectLineFeatures(featureTable, layer.filter, bucket.zoom);
     const sourceFeatures: VectorTileFeatureLike[] = [];
     const bucketFeatures = materializeSelectedFeatures(sourceLayer, selection, bucket.sourceLayerIndex, options.featureIndex, {
