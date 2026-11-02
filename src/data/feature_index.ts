@@ -116,7 +116,7 @@ export class FeatureIndex {
         if (!this.vtLayers) {
             switch (this.encoding) {
                 case 'mlt':
-                    this.vtLayers = new MLTVectorTile(this.rawTileData).layers;
+                    this.vtLayers = new MLTVectorTile(this.rawTileData, {copyProperties: true}).layers;
                     break;
                 case 'mvt':
                 default:

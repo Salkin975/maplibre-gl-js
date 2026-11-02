@@ -65,29 +65,25 @@ describe('MLTVectorTile', () => {
         expect({...second}).toEqual({name: 'b'});
     });
 
-    test('omits 64-bit values outside the safe range and warns once', () => {
-        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const layer = new MLTVectorTile(encode()).layers.places;
-        const feature = layer.feature(2);
+    test('reads 64-bit values outside the safe range as the nearest number, as MVT does', () => {
+        const feature = new MLTVectorTile(encode()).layers.places.feature(2);
 
-        expect(feature.id).toBeUndefined();
-        expect(feature.properties.big).toBeUndefined();
-        expect(layer.feature(2).properties.big).toBeUndefined();
+        expect(feature.id).toBe(Number(2n ** 62n));
+        expect(feature.properties.big).toBe(Number(2n ** 60n));
         expect(feature.properties.name).toBe('c');
-        expect(warn).toHaveBeenCalledTimes(2);
+    });
+
+    test('gives features plain properties that keep what is written to them when asked to copy', () => {
+        const properties = new MLTVectorTile(encode(), {copyProperties: true}).layers.places.feature(0).properties;
+
+        properties.name = 'changed';
+
+        expect(properties.name).toBe('changed');
+        expect(structuredClone(properties)).toEqual({name: 'changed', rank: 1});
     });
 });
 
 describe('MLTVectorTile.releaseDecodedColumns', () => {
-    const readAll = (layer: MLTVectorTileLayer) => {
-        const rows = [];
-        for (let i = 0; i < layer.length; i++) {
-            const feature = layer.feature(i);
-            rows.push({id: feature.id, type: feature.type, geometry: feature.loadGeometry(), properties: {...feature.properties}});
-        }
-        return rows;
-    };
-
     test('decodes again after the release and reads the same values', () => {
         const layer = new MLTVectorTile(encode()).layers.places as MLTVectorTileLayer;
         const before = readAll(layer);
@@ -158,3 +154,12 @@ describe('MLTVectorTile on real tiles', () => {
         }
     });
 });
+
+function readAll(layer: MLTVectorTileLayer) {
+    const rows = [];
+    for (let i = 0; i < layer.length; i++) {
+        const feature = layer.feature(i);
+        rows.push({id: feature.id, type: feature.type, geometry: feature.loadGeometry(), properties: {...feature.properties}});
+    }
+    return rows;
+}
