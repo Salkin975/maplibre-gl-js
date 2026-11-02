@@ -1,12 +1,16 @@
 import Point from '@mapbox/point-geometry';
-import {type FeatureTable, type LayerBlock, type RowViewOptions, createRowView, decodeTile, GEOMETRY_TYPE, readSafeValue, scanLayerBlocks} from '@maplibre/mlt';
-import {warnOnce} from '../util/util';
+import {type FeatureTable, type LayerBlock, createRowView, decodeTile, GEOMETRY_TYPE, GpuVector, scanLayerBlocks, toMvtValue} from '@maplibre/mlt';
 
 import type {VectorTileFeatureLike, VectorTileLayerLike, VectorTileLike} from '@maplibre/vt-pbf';
 
-/** Reports a property value that does not fit a JS number, once per column name. */
-const ROW_VIEW_OPTIONS: RowViewOptions = {
-    onUnsafeValue: (columnName) => warnOnce(`MLT property "${columnName}" is outside the safe integer range and was omitted.`)
+/** Options for {@link MLTVectorTile}. */
+export type MLTVectorTileOptions = {
+    /**
+     * Gives every feature a plain copy of its properties instead of a view that reads the columns on
+     * access. A copy can be written to, cloned and posted, and does not hold the tile's columns, which
+     * is what a feature handed to a caller of the public API needs.
+     */
+    copyProperties?: boolean;
 };
 
 /**
@@ -15,24 +19,16 @@ const ROW_VIEW_OPTIONS: RowViewOptions = {
  *
  * Keys and spread behave as on a fully decoded object, while a layer nobody reads is never decoded.
  */
-function defineLazyLayer(layers: Record<string, VectorTileLayerLike>, layerBlock: LayerBlock) {
+function defineLazyLayer(layers: Record<string, VectorTileLayerLike>, layerBlock: LayerBlock, options: MLTVectorTileOptions) {
     Object.defineProperty(layers, layerBlock.name, {
         configurable: true,
         enumerable: true,
         get() {
-            const layer = new MLTVectorTileLayer(decodeTile(layerBlock.bytes, undefined, false)[0]);
+            const layer = new MLTVectorTileLayer(decodeTile(layerBlock.bytes)[0], options);
             Object.defineProperty(layers, layerBlock.name, {value: layer, configurable: true, enumerable: true, writable: true});
             return layer;
         }
     });
-}
-
-/**
- * Narrows a 64-bit feature id to a JS number. An id outside the safe integer range is omitted
- * with a warning, since any number standing in for it would identify the wrong feature.
- */
-function toFeatureId(id: number | bigint | null | undefined): number | undefined {
-    return readSafeValue(id, () => warnOnce('MLT feature id is outside the safe integer range and was omitted.')) as number | undefined;
 }
 
 /**
@@ -42,7 +38,10 @@ function toFeatureId(id: number | bigint | null | undefined): number | undefined
 class MLTVectorTileFeature implements VectorTileFeatureLike {
     layer: MLTVectorTileLayer;
     index: number;
-    /** Reads through to the layer's property columns, see `createRowView` in `@maplibre/mlt`. */
+    /**
+     * Reads through to the layer's property columns, see `createRowView` in `@maplibre/mlt`, unless the
+     * layer copies them, see {@link MLTVectorTileOptions.copyProperties}.
+     */
     properties: VectorTileFeatureLike['properties'];
     type: VectorTileFeatureLike['type'];
     extent: VectorTileFeatureLike['extent'];
@@ -53,16 +52,37 @@ class MLTVectorTileFeature implements VectorTileFeatureLike {
         this.layer = layer;
         this.index = index;
         this.extent = layer.extent;
-        this.properties = createRowView(featureTable, index, ROW_VIEW_OPTIONS) as VectorTileFeatureLike['properties'];
+        const rowView = createRowView(featureTable, index) as VectorTileFeatureLike['properties'];
+        this.properties = layer.copyProperties ? {...rowView} : rowView;
         this.type = toVectorTileGeometryType(featureTable.geometryVector?.geometryType(index));
-        this.id = toFeatureId(featureTable.idVector?.getValue(index));
+        this.id = toMvtValue(featureTable.idVector?.getValue(index)) as number | undefined;
     }
 
     /** Returns copies of the decoded points, because bucket code is free to modify them. */
     loadGeometry(): Point[][] {
-        const rings = this.layer.featureTable.geometryVector?.getGeometry(this.index) ?? [];
+        const geometryVector = this.layer.featureTable.geometryVector;
+        if (!geometryVector) return [];
+        const rings = geometryVector instanceof GpuVector ?
+            tessellatedLayerGeometries(geometryVector)[this.index] :
+            geometryVector.getGeometry(this.index);
         return rings.map(ring => ring.map(point => new Point(point.x, point.y)));
     }
+}
+
+/** Caches {@link tessellatedLayerGeometries} per layer. */
+const tessellatedGeometries = new WeakMap<GpuVector, ReturnType<GpuVector['getGeometries']>>();
+
+/**
+ * Returns the rings of every feature of a pre-tessellated layer. A `GpuVector` converts its features
+ * only all at once, so the result is kept for the next feature that asks.
+ */
+function tessellatedLayerGeometries(geometryVector: GpuVector): ReturnType<GpuVector['getGeometries']> {
+    let geometries = tessellatedGeometries.get(geometryVector);
+    if (!geometries) {
+        geometries = geometryVector.getGeometries();
+        tessellatedGeometries.set(geometryVector, geometries);
+    }
+    return geometries;
 }
 
 /** Maps an MLT geometry type onto the 0-3 codes of `VectorTileFeatureLike['type']`. */
@@ -92,9 +112,12 @@ export class MLTVectorTileLayer implements VectorTileLayerLike {
     length: number;
     version: number;
     extent: number;
+    /** See {@link MLTVectorTileOptions.copyProperties}. */
+    copyProperties: boolean;
 
-    constructor(featureTable: FeatureTable) {
+    constructor(featureTable: FeatureTable, options: MLTVectorTileOptions = {}) {
         this.featureTable = featureTable;
+        this.copyProperties = !!options.copyProperties;
         this.name = featureTable.name;
         this.extent = featureTable.extent;
         this.version = 2;
@@ -126,9 +149,9 @@ export function isMLTVectorTileLayer(layer: VectorTileLayerLike): layer is MLTVe
 export class MLTVectorTile implements VectorTileLike {
     layers: Record<string, VectorTileLayerLike> = {};
 
-    constructor(buffer: ArrayBuffer) {
+    constructor(buffer: ArrayBuffer, options: MLTVectorTileOptions = {}) {
         for (const layerBlock of scanLayerBlocks(new Uint8Array(buffer))) {
-            defineLazyLayer(this.layers, layerBlock);
+            defineLazyLayer(this.layers, layerBlock, options);
         }
     }
 
