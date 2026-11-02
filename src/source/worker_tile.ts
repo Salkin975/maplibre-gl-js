@@ -7,10 +7,9 @@ import {GlyphAtlas} from '../render/glyph_atlas.ts';
 import {EvaluationParameters} from '../style/evaluation_parameters.ts';
 import {OverscaledTileID} from '../tile/tile_id.ts';
 import {type GetDashesResponse, MessageType, type GetImagesResponse} from '../util/actor_messages.ts';
-import {isMLTVectorTileLayer, MLTVectorTile} from './vector_tile_mlt.ts';
+import {isMLTVectorTileLayer, MLTVectorTile, type MLTVectorTileLayer} from './vector_tile_mlt.ts';
 
 import type {Bucket, IndexedFeature, PopulateParameters} from '../data/bucket.ts';
-import type {FeatureTable} from '@maplibre/mlt';
 import type {IActor} from '../util/actor.ts';
 import type {StyleLayer} from '../style/style_layer.ts';
 import type {StyleLayerIndex} from '../style/style_layer_index.ts';
@@ -128,10 +127,10 @@ export class WorkerTile {
 
                 // A bucket that is not columnar must not get the table, even for an MLT layer: its filter
                 // may not be plannable, in which case createBucket() returned a row-based bucket.
-                let populateFeatures: IndexedFeature[] | FeatureTable = features;
+                let populateFeatures: IndexedFeature[] | MLTVectorTileLayer = features;
                 if (mltLayer) {
                     populateFeatures = bucket.isColumnar ?
-                        mltLayer.featureTable :
+                        mltLayer :
                         (mltRows ??= mltLayer.indexedFeatures((feature) => featureIndex.getId(feature, sourceLayerId), sourceLayerIndex));
                 }
                 bucket.populate(populateFeatures, options, this.tileID.canonical);

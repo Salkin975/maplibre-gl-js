@@ -82,11 +82,12 @@ function serveBuckets(layerIndex: StyleLayerIndex, buckets: FakeBucket[]) {
     return parameters;
 }
 
-const parse = (tile: WorkerTile, data: MLTVectorTile | GeoJSONWrapper, layerIndex: StyleLayerIndex) =>
-    tile.parse(data, layerIndex, [], {} as any, SubdivisionGranularitySetting.noSubdivision);
+function parse(tile: WorkerTile, data: MLTVectorTile | GeoJSONWrapper, layerIndex: StyleLayerIndex) {
+    return tile.parse(data, layerIndex, [], {} as any, SubdivisionGranularitySetting.noSubdivision);
+}
 
 describe('WorkerTile dispatch', () => {
-    test('hands a columnar bucket the feature table and a row-based bucket the rows', async () => {
+    test('hands a columnar bucket the MLT layer and a row-based bucket the rows', async () => {
         const data = createMltTile();
         const layerIndex = createLayerIndex(['columnar', 'row']);
         const [columnar, row] = [fakeBucket(true), fakeBucket(false)];
@@ -94,7 +95,7 @@ describe('WorkerTile dispatch', () => {
 
         await parse(createWorkerTile(), data, layerIndex);
 
-        expect(columnar.populate.mock.calls[0][0]).toBe((data.layers.places as MLTVectorTileLayer).featureTable);
+        expect(columnar.populate.mock.calls[0][0]).toBe(data.layers.places);
         const rows = row.populate.mock.calls[0][0];
         expect(rows).toHaveLength(2);
         expect(rows[0]).toMatchObject({index: 0, id: 1});
@@ -194,7 +195,7 @@ describe('WorkerTile release of decoded columns', () => {
         expect(afterFirst).not.toBe(decodedBefore);
         expect(afterSecond).not.toBe(afterFirst);
         expect(afterSecond?.getValue(1)).toBe('b');
-        expect(bucket.populate.mock.calls.map(call => call[0])).toEqual([table, table]);
+        expect(bucket.populate.mock.calls.map(call => call[0])).toEqual([data.layers.places, data.layers.places]);
     });
 
     test('leaves a row-based tile alone', async () => {
