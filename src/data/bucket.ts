@@ -14,7 +14,7 @@ import type {VectorTileFeatureLike, VectorTileLayerLike} from '@maplibre/vt-pbf'
 import type {GetImagesResponse} from '../util/actor_messages.ts';
 import type {GlyphPositions} from '../render/glyph_atlas.ts';
 import type {GlyphMap} from '../style/style_glyph.ts';
-import type {FeatureTable} from '@maplibre/mlt';
+import type {MLTVectorTileLayer} from '../source/vector_tile_mlt.ts';
 import type {TileEncoding} from '../source/worker_source.ts';
 
 export type BucketParameters<Layer extends TypedStyleLayer> = {
@@ -126,9 +126,9 @@ export interface Bucket {
     readonly layers: any[];
     readonly stateDependentLayers: any[];
     readonly stateDependentLayerIds: string[];
-    /** Whether `populate` reads a tile's columns directly, so that it must be given a `FeatureTable`. */
+    /** Whether `populate` reads a tile's columns directly, so that it must be given the `MLTVectorTileLayer` that holds them. */
     readonly isColumnar?: boolean;
-    populate(features: IndexedFeature[] | FeatureTable, options: PopulateParameters, canonical: CanonicalTileID): void;
+    populate(features: IndexedFeature[] | MLTVectorTileLayer, options: PopulateParameters, canonical: CanonicalTileID): void;
     addFeatures(parameters: BucketDependencyParameters): void;
     update(states: FeatureStates, vtLayer: VectorTileLayerLike, imagePositions: {[_: string]: ImagePosition}, dashPositions: Record<string, DashEntry>): void;
     isEmpty(): boolean;
