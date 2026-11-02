@@ -1,6 +1,8 @@
 import {describe, test, expect, vi, afterEach} from 'vitest';
 import {decodeTile, encodeTile, SINGLE_PART_GEOMETRY_TYPE, type FeatureTable, type SelectionVector} from '@maplibre/mlt';
 import {MLTVectorTileLayer} from '../../../source/vector_tile_mlt.ts';
+import {FeatureIndex} from '../../feature_index.ts';
+import {OverscaledTileID} from '../../../tile/tile_id.ts';
 import {
     columnarTransferOmitList,
     isRowFeatureList,
@@ -9,7 +11,7 @@ import {
     selectColumnarFeatures
 } from './columnar_populate.ts';
 
-import type {FilterSpecification} from '@maplibre/maplibre-gl-style-spec';
+import type {FilterSpecification, PromoteIdSpecification} from '@maplibre/maplibre-gl-style-spec';
 import type {VectorTileFeatureLike} from '@maplibre/vt-pbf';
 import type {BucketFeature} from '../../bucket.ts';
 
@@ -31,13 +33,12 @@ function decodeMixedLayer(): FeatureTable {
     return decodeTile(encodeMixedLayer())[0];
 }
 
-const indices = (selection: SelectionVector) => Array.from({length: selection.limit}, (_, i) => selection.getIndex(i));
 const classIsA: FilterSpecification = ['==', 'class', 'a'];
 
 describe('isRowFeatureList', () => {
     test('tells the row list from the feature table', () => {
         expect(isRowFeatureList([])).toBe(true);
-        expect(isRowFeatureList(decodeMixedLayer())).toBe(false);
+        expect(isRowFeatureList(new MLTVectorTileLayer(decodeMixedLayer()))).toBe(false);
     });
 });
 
@@ -69,14 +70,12 @@ describe('selectColumnarFeatures', () => {
 });
 
 describe('materializeSelectedFeatures', () => {
-    const layerOf = (table: FeatureTable) => new MLTVectorTileLayer(table);
-
     test('reads only the selected rows', () => {
-        const layer = layerOf(decodeMixedLayer());
+        const layer = new MLTVectorTileLayer(decodeMixedLayer());
         const feature = vi.spyOn(layer, 'feature');
         const selection = selectColumnarFeatures(layer.featureTable, classIsA, 5, [SINGLE_PART_GEOMETRY_TYPE.POLYGON]);
 
-        const features = materializeSelectedFeatures(layer, selection, 7);
+        const features = materializeSelectedFeatures(layer, selection, 7, createFeatureIndex());
 
         expect(feature.mock.calls.map(call => call[0])).toEqual([3]);
         expect(features).toHaveLength(1);
@@ -88,22 +87,31 @@ describe('materializeSelectedFeatures', () => {
         expect(features[0].dashes).toBeUndefined();
     });
 
-    test('gives each feature a dashes object when the bucket asks for it', () => {
-        const layer = layerOf(decodeMixedLayer());
+    test('takes the id from the promoteId of the source', () => {
+        const layer = new MLTVectorTileLayer(decodeMixedLayer());
         const selection = selectColumnarFeatures(layer.featureTable, classIsA, 5);
 
-        const features = materializeSelectedFeatures(layer, selection, 0, {hasDashes: true});
+        const features = materializeSelectedFeatures(layer, selection, 0, createFeatureIndex({mixed: 'class'}));
+
+        expect(features.map(feature => feature.id)).toEqual(['a', 'a', 'a']);
+    });
+
+    test('gives each feature a dashes object when the bucket asks for it', () => {
+        const layer = new MLTVectorTileLayer(decodeMixedLayer());
+        const selection = selectColumnarFeatures(layer.featureTable, classIsA, 5);
+
+        const features = materializeSelectedFeatures(layer, selection, 0, createFeatureIndex(), {hasDashes: true});
 
         expect(features.map(feature => feature.dashes)).toEqual([{}, {}, {}]);
     });
 
     test('evaluates the sort key per feature only when one is given', () => {
-        const layer = layerOf(decodeMixedLayer());
+        const layer = new MLTVectorTileLayer(decodeMixedLayer());
         const selection = selectColumnarFeatures(layer.featureTable, classIsA, 5);
         const sortKey = vi.fn((feature: BucketFeature) => feature.index * 10);
 
-        const sorted = materializeSelectedFeatures(layer, selection, 0, {sortKey});
-        const unsorted = materializeSelectedFeatures(layer, selection, 0);
+        const sorted = materializeSelectedFeatures(layer, selection, 0, createFeatureIndex(), {sortKey});
+        const unsorted = materializeSelectedFeatures(layer, selection, 0, createFeatureIndex());
 
         expect(sorted.map(feature => feature.sortKey)).toEqual([0, 10, 30]);
         expect(sortKey).toHaveBeenCalledTimes(3);
@@ -111,11 +119,11 @@ describe('materializeSelectedFeatures', () => {
     });
 
     test('takes the geometry from the resolver of the bucket instead of decoding the rings', () => {
-        const layer = layerOf(decodeMixedLayer());
+        const layer = new MLTVectorTileLayer(decodeMixedLayer());
         const selection = selectColumnarFeatures(layer.featureTable, classIsA, 5, [SINGLE_PART_GEOMETRY_TYPE.POLYGON]);
         const resolveGeometry = vi.fn(() => []);
 
-        const features = materializeSelectedFeatures(layer, selection, 0, {resolveGeometry});
+        const features = materializeSelectedFeatures(layer, selection, 0, createFeatureIndex(), {resolveGeometry});
 
         expect(resolveGeometry).toHaveBeenCalledTimes(1);
         expect(resolveGeometry.mock.calls[0]).toEqual([expect.objectContaining({id: 13}), 3]);
@@ -123,10 +131,10 @@ describe('materializeSelectedFeatures', () => {
     });
 
     test('returns nothing for an empty selection', () => {
-        const layer = layerOf(decodeMixedLayer());
+        const layer = new MLTVectorTileLayer(decodeMixedLayer());
         const selection = selectColumnarFeatures(layer.featureTable, ['==', 'class', 'missing'], 5);
 
-        expect(materializeSelectedFeatures(layer, selection, 0)).toEqual([]);
+        expect(materializeSelectedFeatures(layer, selection, 0, createFeatureIndex())).toEqual([]);
     });
 });
 
@@ -168,3 +176,11 @@ describe('columnarTransferOmitList', () => {
             .toEqual(['layers', 'patternFeatures', 'isColumnar', 'sourceLayerIndex']);
     });
 });
+
+function indices(selection: SelectionVector): number[] {
+    return Array.from({length: selection.limit}, (_, i) => selection.getIndex(i));
+}
+
+function createFeatureIndex(promoteId?: PromoteIdSpecification): FeatureIndex {
+    return new FeatureIndex(new OverscaledTileID(0, 0, 0, 0, 0), promoteId);
+}
