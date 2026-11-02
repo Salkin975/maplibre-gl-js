@@ -1,7 +1,7 @@
 import {describe, test, expect} from 'vitest';
 import {readFileSync} from 'fs';
 import path from 'path';
-import {decodeTile, GpuVector} from '@maplibre/mlt';
+import {decodeTile, GpuVector, type FeatureTable} from '@maplibre/mlt';
 import {FillLayoutArray, LineIndexArray, TriangleIndexArray} from '../../array_types.g.ts';
 import {SegmentVector} from '../../segment.ts';
 import {fillLargeMeshArrays} from '../../../render/fill_large_mesh_arrays.ts';
@@ -31,8 +31,9 @@ describe('buildTessellatedFillMesh', () => {
 
 describe('writeTessellatedFill', () => {
     const tile = path.join(__dirname, '../../../../test/integration/assets/tiles/mlt/5/22/12.mlt');
-    const tessellatedTables = () => decodeTile(new Uint8Array(readFileSync(tile)))
-        .filter(table => table.geometryVector instanceof GpuVector);
+    function tessellatedTables(): FeatureTable[] {
+        return decodeTile(new Uint8Array(readFileSync(tile))).filter(table => table.geometryVector instanceof GpuVector);
+    }
 
     test('draws the triangles and the outline of the mesh builder, counter-clockwise', () => {
         const tables = tessellatedTables();
@@ -148,18 +149,20 @@ function createTarget(): FillMeshTarget {
 
 /** The triangles a target holds, as vertex positions in the order they are drawn. */
 function trianglesOf(target: FillMeshTarget): Position[][] {
-    const {int16} = target.layoutVertexArray;
     const {uint16} = target.indexArray;
-    const position = (vertex: number): Position => [int16[vertex * 2], int16[vertex * 2 + 1]];
-    return Array.from({length: target.indexArray.length}, (_, i) => [0, 1, 2].map(corner => position(uint16[i * 3 + corner])));
+    return Array.from({length: target.indexArray.length}, (_, i) => [0, 1, 2].map(corner => positionOf(target, uint16[i * 3 + corner])));
 }
 
 /** The outline edges a target holds, as pairs of vertex positions. */
 function edgesOf(target: FillMeshTarget): Position[][] {
-    const {int16} = target.layoutVertexArray;
     const {uint16} = target.indexArray2;
-    const position = (vertex: number): Position => [int16[vertex * 2], int16[vertex * 2 + 1]];
-    return Array.from({length: target.indexArray2.length}, (_, i) => [position(uint16[i * 2]), position(uint16[i * 2 + 1])]);
+    return Array.from({length: target.indexArray2.length}, (_, i) => [positionOf(target, uint16[i * 2]), positionOf(target, uint16[i * 2 + 1])]);
+}
+
+/** The position of vertex `vertex` of a target. */
+function positionOf(target: FillMeshTarget, vertex: number): Position {
+    const {int16} = target.layoutVertexArray;
+    return [int16[vertex * 2], int16[vertex * 2 + 1]];
 }
 
 /**

@@ -8,6 +8,8 @@ import {CollisionBoxArray} from '../../array_types.g.ts';
 import {FillBucket} from '../fill_bucket.ts';
 import {ColumnarFillBucket} from './columnar_fill_bucket.ts';
 import {MLTVectorTileLayer} from '../../../source/vector_tile_mlt.ts';
+import {FeatureIndex} from '../../feature_index.ts';
+import {OverscaledTileID} from '../../../tile/tile_id.ts';
 import {SubdivisionGranularityExpression, SubdivisionGranularitySetting} from '../../../render/subdivision_granularity_settings.ts';
 
 import type Point from '@mapbox/point-geometry';
@@ -20,18 +22,20 @@ import type {CanonicalTileID} from '../../../tile/tile_id.ts';
  * A pre-tessellated layer of two polygons that stores only triangles: a square (two triangles, four
  * vertices) and a triangle. No ring topology, so there is no outline and no per-feature vertex count.
  */
-function triangleOnlyLayer(): FeatureTable {
+function triangleOnlyLayer(): MLTVectorTileLayer {
     const geometryVector = createFlatGpuVector(
         new Uint32Array([GEOMETRY_TYPE.POLYGON, GEOMETRY_TYPE.POLYGON]),
         new Uint32Array([0, 2, 3]),
         new Uint32Array([0, 1, 2, 0, 2, 3, 0, 1, 2]),
         new Int32Array([0, 0, 100, 0, 100, 100, 0, 100, 200, 0, 300, 0, 250, 100])
     );
-    return new FeatureTable('land', geometryVector, undefined, [], 4096, 2);
+    return new MLTVectorTileLayer(new FeatureTable('land', geometryVector, undefined, [], 4096, 2));
 }
 
 const ZOOM = 5;
 const CANONICAL = {z: ZOOM, x: 0, y: 0} as CanonicalTileID;
+/** A tile that borders neither edge of the world, so `subdividePolygon()` adds no pole geometry to it. */
+const INNER_CANONICAL = {z: ZOOM, x: 3, y: 4} as CanonicalTileID;
 
 /** Three ring-encoded polygons: a square with a hole, a triangle, and another square. */
 function encodePolygons(): Uint8Array {
@@ -62,20 +66,24 @@ function bucketParameters(layer: FillStyleLayer, encoding: 'mlt' | 'mvt' = 'mlt'
 }
 
 function populateOptions() {
-    const insert = vi.fn();
+    const featureIndex = new FeatureIndex(new OverscaledTileID(ZOOM, 0, ZOOM, 0, 0));
+    const insert = vi.spyOn(featureIndex, 'insert').mockImplementation(() => {});
     const options = {
-        featureIndex: {insert},
+        featureIndex,
         iconDependencies: {}, patternDependencies: {}, glyphDependencies: {}, dashDependencies: {},
         availableImages: [], subdivisionGranularity: SubdivisionGranularitySetting.noSubdivision
     } as unknown as PopulateParameters;
     return {options, insert};
 }
 
-const rowsOf = (layer: MLTVectorTileLayer): IndexedFeature[] =>
-    Array.from({length: layer.length}, (_, index) => ({feature: layer.feature(index), id: index, index, sourceLayerIndex: 0}));
+function rowsOf(layer: MLTVectorTileLayer): IndexedFeature[] {
+    return Array.from({length: layer.length}, (_, index) => ({feature: layer.feature(index), id: index, index, sourceLayerIndex: 0}));
+}
 
 /** The used part of a struct array, byte for byte. */
-const bytes = (array: StructArray) => Array.from(new Uint8Array(array.arrayBuffer, 0, array.length * array.bytesPerElement));
+function bytes(array: StructArray): number[] {
+    return Array.from(new Uint8Array(array.arrayBuffer, 0, array.length * array.bytesPerElement));
+}
 
 /** What a bucket wrote: its three arrays and its segments. */
 function written(bucket: FillBucket) {
@@ -100,7 +108,7 @@ function populateBoth(table: FeatureTable, filter?: FilterSpecification, layout:
     const columnarLayer = createLayer(filter, layout);
     const columnar = new ColumnarFillBucket(bucketParameters(columnarLayer));
     const columnarOptions = populateOptions();
-    columnar.populate(table, columnarOptions.options, CANONICAL);
+    columnar.populate(sourceLayer, columnarOptions.options, CANONICAL);
 
     return {
         row: {...written(row), indexed: rowOptions.insert.mock.calls.map(call => call[2])},
@@ -141,10 +149,27 @@ describe('ColumnarFillBucket on ring-encoded polygons', () => {
         const {options, insert} = populateOptions();
         const bucket = new ColumnarFillBucket(bucketParameters(createLayer()));
 
-        bucket.populate(table, options, CANONICAL);
+        bucket.populate(new MLTVectorTileLayer(table), options, CANONICAL);
 
         expect(feature).toHaveBeenCalledTimes(3);
         expect(insert.mock.calls.map(call => call[0])).toEqual(feature.mock.results.map(result => result.value));
+    });
+
+    test('fills lines and indexes points like FillBucket, which does not tell geometry types apart', () => {
+        const table = decodeTile(encodeTile([{
+            name: 'land',
+            extent: 4096,
+            features: [
+                {id: 1, geometry: {type: 'LineString', coordinates: [[0, 0], [400, 0], [400, 400], [0, 0]]}, properties: {}},
+                {id: 2, geometry: {type: 'Polygon', coordinates: [[[500, 0], [900, 0], [700, 400]]]}, properties: {}},
+                {id: 3, geometry: {type: 'Point', coordinates: [1000, 1000]}, properties: {}}
+            ]
+        }]))[0];
+
+        const {row, columnar} = populateBoth(table);
+
+        expect(columnar).toEqual(row);
+        expect(columnar.indexed).toEqual([0, 1, 2]);
     });
 
     test('populates from a row list through FillBucket when it is given one', () => {
@@ -161,9 +186,6 @@ describe('ColumnarFillBucket on ring-encoded polygons', () => {
 });
 
 describe('ColumnarFillBucket on ring-encoded polygons in a tile away from the poles', () => {
-    /** A tile that borders neither edge of the world, so `subdividePolygon()` adds no pole geometry to it. */
-    const INNER_CANONICAL = {z: ZOOM, x: 3, y: 4} as CanonicalTileID;
-
     /** A multipolygon of a square with a hole and a triangle, and a polygon that reaches past the clamped range. */
     function encodeMultiPolygons(): Uint8Array {
         return encodeTile([{
@@ -191,7 +213,7 @@ describe('ColumnarFillBucket on ring-encoded polygons in a tile away from the po
             row.populate(rowsOf(new MLTVectorTileLayer(table)), rowOptions.options, INNER_CANONICAL);
             const columnarOptions = populateOptions();
             const columnar = new ColumnarFillBucket(bucketParameters(createLayer()));
-            columnar.populate(table, columnarOptions.options, INNER_CANONICAL);
+            columnar.populate(new MLTVectorTileLayer(table), columnarOptions.options, INNER_CANONICAL);
 
             expect(drawn(row).triangles.length).toBeGreaterThan(0);
             expect(drawn(columnar)).toEqual(drawn(row));
@@ -203,25 +225,8 @@ describe('ColumnarFillBucket on ring-encoded polygons in a tile away from the po
     test('indexes a pattern fill, which it writes only later, with the same boxes as FillBucket', () => {
         const table = decodeTile(encodeMultiPolygons())[0];
         vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const patternLayer = () => {
-            const layer = new FillStyleLayer({
-                id: 'fill', type: 'fill', source: 's', 'source-layer': 'land', paint: {'fill-pattern': 'stripes'}
-            } as any, {});
-            layer.recalculate(new EvaluationParameters(ZOOM), []);
-            return layer;
-        };
-        /** The boxes of each insert at the time of the call, before anything could fill them in. */
-        const indexedBoxes = (bucket: FillBucket, features: IndexedFeature[] | FeatureTable) => {
-            const {options, insert} = populateOptions();
-            const boxes: number[][][] = [];
-            insert.mockImplementation((_feature, geometry: Point[][]) => boxes.push(ringBoxes(geometry)));
-            bucket.populate(features as any, options, INNER_CANONICAL);
-            expect(bucket.hasDependencies).toBe(true);
-            return boxes;
-        };
-
         const row = indexedBoxes(new FillBucket(bucketParameters(patternLayer())), rowsOf(new MLTVectorTileLayer(table)));
-        const columnar = indexedBoxes(new ColumnarFillBucket(bucketParameters(patternLayer())), table);
+        const columnar = indexedBoxes(new ColumnarFillBucket(bucketParameters(patternLayer())), new MLTVectorTileLayer(table));
 
         expect(columnar).toEqual(row);
         expect(columnar.flat().length).toBeGreaterThan(0);
@@ -243,7 +248,7 @@ describe('ColumnarFillBucket on ring-encoded polygons in a tile away from the po
         const columnarOptions = populateOptions();
         columnarOptions.options.subdivisionGranularity = subdivided;
         const columnar = new ColumnarFillBucket(bucketParameters(createLayer()));
-        columnar.populate(table, columnarOptions.options, INNER_CANONICAL);
+        columnar.populate(new MLTVectorTileLayer(table), columnarOptions.options, INNER_CANONICAL);
 
         expect(written(columnar)).toEqual(written(row));
     });
@@ -255,7 +260,9 @@ describe('ColumnarFillBucket on ring-encoded polygons in a tile away from the po
  */
 function drawn(bucket: FillBucket) {
     const vertices = bucket.layoutVertexArray.int16;
-    const position = (vertex: number) => `${vertices[vertex * 2]},${vertices[vertex * 2 + 1]}`;
+    function position(vertex: number): string {
+        return `${vertices[vertex * 2]},${vertices[vertex * 2 + 1]}`;
+    }
 
     const triangles: string[] = [];
     for (const segment of bucket.segments.get()) {
@@ -321,8 +328,9 @@ describe('FillStyleLayer.createBucket', () => {
 
 describe('ColumnarFillBucket on a pre-tessellated tile', () => {
     const tile = path.join(__dirname, '../../../../test/integration/assets/tiles/mlt/5/22/12.mlt');
-    const tessellatedTables = () => decodeTile(new Uint8Array(readFileSync(tile)))
-        .filter(table => table.geometryVector instanceof GpuVector);
+    function tessellatedTables(): FeatureTable[] {
+        return decodeTile(new Uint8Array(readFileSync(tile))).filter(table => table.geometryVector instanceof GpuVector);
+    }
 
     test('writes the tile\'s own triangles and indexes every feature by its bounding box', () => {
         const tables = tessellatedTables();
@@ -333,7 +341,7 @@ describe('ColumnarFillBucket on a pre-tessellated tile', () => {
             const {options, insert} = populateOptions();
             const bucket = new ColumnarFillBucket(bucketParameters(createLayer()));
 
-            bucket.populate(table, options, CANONICAL);
+            bucket.populate(new MLTVectorTileLayer(table), options, CANONICAL);
 
             // Every triangle of the tile is written once, none is added or dropped by a triangulation.
             expect(bucket.indexArray).toHaveLength(geometryVector.triangleOffsets[table.numFeatures]);
@@ -370,3 +378,23 @@ describe('ColumnarFillBucket on a pre-tessellated layer without ring topology', 
         expect(warn.mock.calls[0][0]).toContain('without ring topology');
     });
 });
+
+function patternLayer(): FillStyleLayer {
+    const layer = new FillStyleLayer({
+        id: 'fill', type: 'fill', source: 's', 'source-layer': 'land', paint: {'fill-pattern': 'stripes'}
+    } as any, {});
+    layer.recalculate(new EvaluationParameters(ZOOM), []);
+    return layer;
+}
+
+/** The boxes of each insert at the time of the call, before anything could fill them in. */
+function indexedBoxes(bucket: Bucket, features: IndexedFeature[] | MLTVectorTileLayer): number[][][] {
+    const {options, insert} = populateOptions();
+    const boxes: number[][][] = [];
+    insert.mockImplementation((_feature, geometry: Point[][]) => {
+        boxes.push(ringBoxes(geometry));
+    });
+    bucket.populate(features, options, INNER_CANONICAL);
+    expect(bucket.hasDependencies).toBe(true);
+    return boxes;
+}
