@@ -27,7 +27,11 @@ export class ColumnarFillBucket extends FillBucket {
     isColumnar = true;
     sourceLayerIndex: number;
 
-    /** Set while the bucket writes features straight from the tile's geometry, so `addFeature()` can read it. */
+    /**
+     * Set while the bucket writes features straight from the tile's geometry, so `addFeature()` can read it.
+     * Cleared once it has, since the bucket is structure-cloned to the main thread and neither a `GpuVector`
+     * nor a `GeometryVector` is a class `web_worker_transfer` knows how to send.
+     */
     private direct: {geometryVector: GpuVector | GeometryVector; scale: number} | undefined;
 
     constructor(options: BucketParameters<FillStyleLayer>) {
@@ -67,12 +71,12 @@ export class ColumnarFillBucket extends FillBucket {
         if (isTessellated) reserveTessellatedFill(this, geometryVector, bucketFeatures);
         else if (isEarcut) reserveEarcutFill(this, geometryVector, bucketFeatures.filter(isPolygon));
         this.addBucketFeatures(bucketFeatures, index => sourceFeatures[index], options, canonical);
-        if (!this.hasDependencies) this.releaseDirectGeometry();
+        if (!this.hasDependencies) this.direct = undefined;
     }
 
     addFeatures(parameters: BucketDependencyParameters): void {
         super.addFeatures(parameters);
-        this.releaseDirectGeometry();
+        this.direct = undefined;
     }
 
     /**
@@ -103,16 +107,6 @@ export class ColumnarFillBucket extends FillBucket {
         return geometryVector instanceof GpuVector ?
             buildTessellatedBoundingBox(geometryVector, index, scale) :
             buildRingBoundingBoxes(geometryVector, index, scale);
-    }
-
-    /**
-     * Drops the tile's geometry once the bucket has written everything it needs from it.
-     *
-     * The bucket itself is structure-cloned to the main thread, and neither a `GpuVector` nor a
-     * `GeometryVector` is a class `web_worker_transfer` knows how to send.
-     */
-    private releaseDirectGeometry(): void {
-        this.direct = undefined;
     }
 }
 
