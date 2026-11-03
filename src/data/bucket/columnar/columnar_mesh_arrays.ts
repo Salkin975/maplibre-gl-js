@@ -104,18 +104,19 @@ type TessellatedFeature = {
 
 /** Finds feature `index` of a pre-tessellated layer in the layer's buffers. */
 function locateTessellatedFeature(geometryVector: GpuVector, index: number): TessellatedFeature {
-    const {triangleOffsets, indexBuffer, topologyVector} = geometryVector;
+    const {triangleOffsets, topologyVector} = geometryVector;
     const ringOffsets = topologyVector?.ringOffsets;
-    const vertexBase = tessellatedVertexBase(geometryVector, index);
     const triangleStart = triangleOffsets[index] * 3;
     const triangleEnd = triangleOffsets[index + 1] * 3;
     if (!ringOffsets) {
-        const numVertices = highestVertexCount(indexBuffer, triangleStart, triangleEnd);
+        const vertexBase = tessellatedVertexBase(geometryVector, index);
+        const numVertices = tessellatedVertexBase(geometryVector, index + 1) - vertexBase;
         return {vertexBase, numVertices, triangleStart, triangleEnd, firstRing: 0, endRing: 0};
     }
 
     const firstRing = firstRingOf(topologyVector, index);
     const endRing = endRingOf(topologyVector, index);
+    const vertexBase = ringOffsets[firstRing];
     const numVertices = ringOffsets[endRing] - vertexBase;
     return {vertexBase, numVertices, triangleStart, triangleEnd, firstRing, endRing};
 }
@@ -177,15 +178,6 @@ function firstRingOf(topology: Topology | undefined, index: number): number {
 function endRingOf(topology: Topology | undefined, index: number): number {
     const part = topology?.geometryOffsets?.[index + 1] ?? index + 1;
     return topology?.partOffsets?.[part] ?? part;
-}
-
-/** One more than the highest vertex index the triangles in `[start, end)` of `indexBuffer` use, or 0 for none. */
-function highestVertexCount(indexBuffer: Uint32Array, start: number, end: number): number {
-    let count = 0;
-    for (let i = start; i < end; i++) {
-        if (indexBuffer[i] >= count) count = indexBuffer[i] + 1;
-    }
-    return count;
 }
 
 /**
@@ -453,22 +445,24 @@ export function buildRingBoundingBoxes(geometryVector: GeometryVector, index: nu
 /**
  * A feature's bounding box as a single degenerate "ring" of its min and max corners - all
  * `FeatureIndex.insert()` needs for pre-tessellated tiles, whose rings are otherwise never decoded.
+ * Only the two corners are scaled, since {@link scaleCoordinate} keeps the order of coordinates; a
+ * feature without vertices has no box.
  */
 export function buildTessellatedBoundingBox(geometryVector: GpuVector, index: number, scale: number): Point[][] {
-    const {triangleOffsets, indexBuffer, vertexBuffer} = geometryVector;
-    const start = triangleOffsets[index] * 3;
-    const end = triangleOffsets[index + 1] * 3;
-    const vertexBase = tessellatedVertexBase(geometryVector, index);
+    const {vertexBuffer} = geometryVector;
+    const {vertexBase, numVertices} = locateTessellatedFeature(geometryVector, index);
 
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (let i = start; i < end; i++) {
-        const vertexIndex = vertexBase + indexBuffer[i];
-        const x = scaleCoordinate(vertexBuffer[vertexIndex * 2], scale);
-        const y = scaleCoordinate(vertexBuffer[vertexIndex * 2 + 1], scale);
+    for (let v = vertexBase * 2; v < (vertexBase + numVertices) * 2; v += 2) {
+        const x = vertexBuffer[v];
+        const y = vertexBuffer[v + 1];
         if (x < minX) minX = x;
         if (y < minY) minY = y;
         if (x > maxX) maxX = x;
         if (y > maxY) maxY = y;
     }
-    return [[new Point(minX, minY), new Point(maxX, maxY)]];
+    return minX > maxX ? [] : [[
+        new Point(scaleCoordinate(minX, scale), scaleCoordinate(minY, scale)),
+        new Point(scaleCoordinate(maxX, scale), scaleCoordinate(maxY, scale)),
+    ]];
 }
