@@ -95,7 +95,7 @@ export function materializeSelectedFeatures(
             sourceLayerIndex,
             geometry: resolveGeometry(feature, index),
             patterns: {},
-            ...(options.hasDashes ? {dashes: {}} : {}),
+            dashes: options.hasDashes ? {} : undefined,
         };
         if (options.sortKey) bucketFeature.sortKey = options.sortKey(bucketFeature);
         bucketFeatures.push(bucketFeature);
