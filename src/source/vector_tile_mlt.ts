@@ -104,20 +104,13 @@ export function hasRingTopology(geometryVector: GpuVector): boolean {
 const inferredVertexBases = new WeakMap<GpuVector, Uint32Array>();
 
 /**
- * Returns the position in `vertexBuffer` of feature `index`'s first vertex. The feature's entries in
- * `indexBuffer` count from 0, so they address `vertexBuffer` only once this base is added.
+ * Returns the position in `vertexBuffer` of feature `index`'s first vertex in a layer without ring
+ * topology, or of the end of the last feature when `index` is the number of features. The feature's
+ * entries in `indexBuffer` count from 0, so they address `vertexBuffer` only once this base is added.
  *
- * A layer without ring topology does not store how many vertices a feature has; see
- * {@link inferVertexBases}.
+ * Such a layer does not store how many vertices a feature has; see {@link inferVertexBases}.
  */
 export function tessellatedVertexBase(geometryVector: GpuVector, index: number): number {
-    const topology = geometryVector.topologyVector;
-    if (topology?.ringOffsets) {
-        const rootIndex = topology.geometryOffsets?.[index] ?? index;
-        const ringIndex = topology.partOffsets?.[rootIndex] ?? rootIndex;
-        return topology.ringOffsets[ringIndex];
-    }
-
     let bases = inferredVertexBases.get(geometryVector);
     if (!bases) {
         bases = inferVertexBases(geometryVector);
@@ -127,8 +120,8 @@ export function tessellatedVertexBase(geometryVector: GpuVector, index: number):
 }
 
 /**
- * Returns the vertex base of every feature of a layer without ring topology, counting each feature's
- * vertices as one more than the highest index its triangles use.
+ * Returns the vertex base of every feature of a layer without ring topology, and the end of the last
+ * feature after them, counting each feature's vertices as one more than the highest index its triangles use.
  *
  * The count comes out short when earcut dropped a feature's last vertex as a duplicate or collinear
  * point, and every feature after it is then read from the wrong vertices.
@@ -136,15 +129,13 @@ export function tessellatedVertexBase(geometryVector: GpuVector, index: number):
 function inferVertexBases(geometryVector: GpuVector): Uint32Array {
     const {triangleOffsets, indexBuffer} = geometryVector;
     const numFeatures = triangleOffsets.length - 1;
-    const bases = new Uint32Array(numFeatures);
-    let base = 0;
+    const bases = new Uint32Array(numFeatures + 1);
     for (let feature = 0; feature < numFeatures; feature++) {
-        bases[feature] = base;
         let numVertices = 0;
         for (let i = triangleOffsets[feature] * 3; i < triangleOffsets[feature + 1] * 3; i++) {
             numVertices = Math.max(numVertices, indexBuffer[i] + 1);
         }
-        base += numVertices;
+        bases[feature + 1] = bases[feature] + numVertices;
     }
     return bases;
 }
@@ -159,13 +150,13 @@ function inferVertexBases(geometryVector: GpuVector): Uint32Array {
  * and a fill bucket would then cut the triangle out of its neighbour instead of filling it.
  */
 function trianglesAsRings(geometryVector: GpuVector, index: number): Point[][] {
-    const {triangleOffsets, indexBuffer} = geometryVector;
+    const {triangleOffsets, indexBuffer, vertexBuffer} = geometryVector;
     const vertexBase = tessellatedVertexBase(geometryVector, index);
     const rings: Point[][] = [];
     for (let i = triangleOffsets[index] * 3; i < triangleOffsets[index + 1] * 3; i += 3) {
         const ring = [0, 1, 2].map(corner => {
-            const [x, y] = geometryVector.getVertex(vertexBase + indexBuffer[i + corner]);
-            return new Point(x, y);
+            const vertex = (vertexBase + indexBuffer[i + corner]) * 2;
+            return new Point(vertexBuffer[vertex], vertexBuffer[vertex + 1]);
         });
         const [a, b, c] = ring;
         if ((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x) < 0) ring.reverse();
