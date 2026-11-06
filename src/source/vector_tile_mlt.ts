@@ -8,7 +8,7 @@ import type {IndexedFeature} from '../data/bucket.ts';
 type TopologyVector = GeometryVector['topologyVector'];
 
 /** Options for {@link MLTVectorTile}. */
-export type MLTVectorTileOptions = {
+type MLTVectorTileOptions = {
     /**
      * Gives every feature a plain copy of its properties instead of a view that reads the columns on
      * access. A copy can be written to, cloned and posted, and does not hold the tile's columns, which

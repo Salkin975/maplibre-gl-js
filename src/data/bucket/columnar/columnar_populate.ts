@@ -11,7 +11,7 @@ import type {FeatureIndex} from '../../feature_index.ts';
 import type {MLTVectorTileLayer} from '../../../source/vector_tile_mlt.ts';
 
 /** Resolves one feature's rendered geometry. The default, `loadGeometryOrEmpty`, is a full ring decode. */
-export type GeometryResolver = (feature: VectorTileFeatureLike, index: number) => Point[][];
+type GeometryResolver = (feature: VectorTileFeatureLike, index: number) => Point[][];
 
 /** Distinguishes `populate()`'s row-based `IndexedFeature[]` input from its columnar `MLTVectorTileLayer` input. */
 export function isRowFeatureList(features: IndexedFeature[] | MLTVectorTileLayer): features is IndexedFeature[] {
