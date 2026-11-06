@@ -24,7 +24,7 @@ export type FillMeshTarget = {
 };
 
 /** A fill polygon's triangles and outline edges, in the shape `fillLargeMeshArrays()` consumes. */
-export type FillMesh = {
+type FillMesh = {
     /** Flattened vertex positions (xyxyxy…), already scaled to the internal `EXTENT`. */
     flattenedVertices: number[];
     /** Triangle indices into `flattenedVertices`' vertex pairs. */
@@ -280,17 +280,25 @@ export function reserveEarcutFill(target: FillMeshTarget, geometryVector: Geomet
 }
 
 /**
+ * Tells whether `subdividePolygon()` changes the polygons of tile `canonical`: it subdivides them at a
+ * granularity of 2 or more, which the globe uses at every zoom, and it extends the polygons of a tile on
+ * the north or south edge of the world to the poles, in every projection. Neither direct write does
+ * either, so such a tile is triangulated by `FillBucket`.
+ */
+export function needsSubdivision(canonical: CanonicalTileID, granularity: number): boolean {
+    return granularity >= 2 || canonical.y === 0 || canonical.y === (1 << canonical.z) - 1;
+}
+
+/**
  * Tells whether {@link writeEarcutFill} can write the polygons of `geometryVector` in tile `canonical`.
  *
  * It can when the vertices are stored as x and y pairs with ring offsets, and `subdividePolygon()` would
- * neither subdivide the polygons nor add geometry to them: the granularity is below 2, and the tile does
- * not border the north or south edge of the world, whose polygons it extends to the poles.
+ * leave the polygons as they are ({@link needsSubdivision}).
  */
 export function canWriteEarcutFill(geometryVector: GeometryVector, canonical: CanonicalTileID, granularity: number): boolean {
     const {partOffsets, ringOffsets} = geometryVector.topologyVector;
-    const bordersPole = canonical.y === 0 || canonical.y === (1 << canonical.z) - 1;
     const isMortonEncoded = !!geometryVector.vertexOffsets && !!geometryVector.mortonSettings;
-    return granularity < 2 && !bordersPole && !!partOffsets && !!ringOffsets && !isMortonEncoded;
+    return !needsSubdivision(canonical, granularity) && !!partOffsets && !!ringOffsets && !isMortonEncoded;
 }
 
 /**

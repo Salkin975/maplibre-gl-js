@@ -3,7 +3,7 @@ import {FillBucket} from '../fill_bucket.ts';
 import {warnOnce} from '../../../util/util.ts';
 import {register} from '../../../util/web_worker_transfer.ts';
 import {selectColumnarFeatures, materializeSelectedFeatures, isRowFeatureList, loadGeometryOrEmpty, columnarTransferOmitList} from './columnar_populate.ts';
-import {writeTessellatedFill, reserveTessellatedFill, buildTessellatedBoundingBox, extentScale, canWriteEarcutFill, writeEarcutFill, reserveEarcutFill, buildRingBoundingBoxes} from './columnar_mesh_arrays.ts';
+import {writeTessellatedFill, reserveTessellatedFill, buildTessellatedBoundingBox, extentScale, canWriteEarcutFill, writeEarcutFill, reserveEarcutFill, buildRingBoundingBoxes, needsSubdivision} from './columnar_mesh_arrays.ts';
 import {hasRingTopology} from '../../../source/vector_tile_mlt.ts';
 
 import type Point from '@mapbox/point-geometry';
@@ -20,8 +20,9 @@ import type {SubdivisionGranularitySetting} from '../../../render/subdivision_gr
  * from the table's vertex buffer: a pre-tessellated tile's triangles come from the tile's own mesh, and
  * any other tile's polygons are triangulated by earcut on the buffer, without making a point of each
  * vertex. A tile that `subdividePolygon()` would change - on the globe, or at the edge of the world - is
- * triangulated by `FillBucket`, and so is a line or point, which `FillBucket` fills as the area it
- * encloses. Sorting, pattern handling and indexing are `FillBucket`'s own.
+ * triangulated by `FillBucket` from its rings, a pre-tessellated tile included, whose mesh is then not
+ * used; so is a line or point, which `FillBucket` fills as the area it encloses. Sorting, pattern
+ * handling and indexing are `FillBucket`'s own.
  */
 export class ColumnarFillBucket extends FillBucket {
     isColumnar = true;
@@ -49,11 +50,12 @@ export class ColumnarFillBucket extends FillBucket {
         const layer = this.layers[0];
 
         const geometryVector = featureTable.geometryVector;
-        const isTessellated = geometryVector instanceof GpuVector;
+        const granularity = options.subdivisionGranularity.fill.getGranularityForZoomLevel(canonical.z);
+        // The tile's mesh is not subdivided, so on the globe and at the poles FillBucket triangulates the rings
+        const isTessellated = geometryVector instanceof GpuVector && !needsSubdivision(canonical, granularity);
         if (isTessellated && !hasRingTopology(geometryVector)) {
             warnOnce(`Fill layer "${layer.id}" is pre-tessellated without ring topology, so it draws no outline and "fill-outline-color" has no effect on it.`);
         }
-        const granularity = options.subdivisionGranularity.fill.getGranularityForZoomLevel(canonical.z);
         const isEarcut = geometryVector instanceof GeometryVector && canWriteEarcutFill(geometryVector, canonical, granularity);
         this.direct = isTessellated || isEarcut ? {geometryVector, scale: extentScale(featureTable.extent)} : undefined;
 

@@ -341,7 +341,7 @@ describe('ColumnarFillBucket on a pre-tessellated tile', () => {
             const {options, insert} = populateOptions();
             const bucket = new ColumnarFillBucket(bucketParameters(createLayer()));
 
-            bucket.populate(new MLTVectorTileLayer(table), options, CANONICAL);
+            bucket.populate(new MLTVectorTileLayer(table), options, INNER_CANONICAL);
 
             // Every triangle of the tile is written once, none is added or dropped by a triangulation.
             expect(bucket.indexArray).toHaveLength(geometryVector.triangleOffsets[table.numFeatures]);
@@ -352,6 +352,38 @@ describe('ColumnarFillBucket on a pre-tessellated tile', () => {
                 expect(geometry[0]).toHaveLength(2);
                 expect(geometry[0][0].x).toBeLessThanOrEqual(geometry[0][1].x);
                 expect(geometry[0][0].y).toBeLessThanOrEqual(geometry[0][1].y);
+            }
+        }
+    });
+
+    test('ignores the tile\'s triangles and writes what FillBucket writes on the globe and at the poles', () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const globe = new SubdivisionGranularitySetting({
+            fill: new SubdivisionGranularityExpression(128, 2),
+            line: new SubdivisionGranularityExpression(128, 2),
+            tile: new SubdivisionGranularityExpression(128, 2),
+            stencil: new SubdivisionGranularityExpression(128, 2),
+            circle: 3
+        });
+        const cases: Array<[CanonicalTileID, SubdivisionGranularitySetting]> = [
+            [INNER_CANONICAL, globe],
+            [CANONICAL, SubdivisionGranularitySetting.noSubdivision]
+        ];
+        for (const table of tessellatedTables()) {
+            for (const [canonical, granularity] of cases) {
+                const rowOptions = populateOptions();
+                rowOptions.options.subdivisionGranularity = granularity;
+                const row = new FillBucket(bucketParameters(createLayer()));
+                row.populate(rowsOf(new MLTVectorTileLayer(table)), rowOptions.options, canonical);
+                const columnarOptions = populateOptions();
+                columnarOptions.options.subdivisionGranularity = granularity;
+                const columnar = new ColumnarFillBucket(bucketParameters(createLayer()));
+                columnar.populate(new MLTVectorTileLayer(table), columnarOptions.options, canonical);
+
+                expect(written(row).triangles.length).toBeGreaterThan(0);
+                expect(written(columnar)).toEqual(written(row));
+                expect(columnarOptions.insert.mock.calls.map(call => [call[2], ringBoxes(call[1])]))
+                    .toEqual(rowOptions.insert.mock.calls.map(call => [call[2], ringBoxes(call[1])]));
             }
         }
     });
@@ -367,7 +399,7 @@ describe('ColumnarFillBucket on a pre-tessellated layer without ring topology', 
         const {options, insert} = populateOptions();
         const bucket = new ColumnarFillBucket(bucketParameters(createLayer()));
 
-        bucket.populate(triangleOnlyLayer(), options, CANONICAL);
+        bucket.populate(triangleOnlyLayer(), options, INNER_CANONICAL);
 
         expect(bucket.indexArray).toHaveLength(3);
         // Four vertices of the square and three of the triangle, each position once per feature.
