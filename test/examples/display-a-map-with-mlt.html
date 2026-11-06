@@ -12,19 +12,78 @@
     <style>
         body { margin: 0; padding: 0; }
         html, body, #map { height: 100%; }
+        #controls {
+            position: absolute; top: 10px; left: 10px; z-index: 1;
+            background: rgba(255, 255, 255, 0.9); padding: 8px 10px; border-radius: 4px;
+            font: 13px/1.6 sans-serif; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+        }
+        #controls label { display: block; }
     </style>
 </head>
 <body>
+<div id="controls">
+    <label>Tiles
+        <select id="tiles">
+            <option value="mlt-pre-tess">MLT pre-tessellated</option>
+            <option value="mlt">MLT plain</option>
+            <option value="mvt">MVT</option>
+        </select>
+    </label>
+    <label>Projection
+        <select id="projection">
+            <option value="globe">globe</option>
+            <option value="mercator">mercator</option>
+        </select>
+    </label>
+    <label>Style
+        <select id="style">
+            <option value="osm-bright">osm-bright</option>
+            <option value="positron">positron</option>
+        </select>
+    </label>
+    <label><input type="checkbox" id="boundaries"> tile borders</label>
+</div>
 <div id="map"></div>
 <script type="module">
     import * as maplibregl from '../../dist/maplibre-gl-dev.mjs';
 
+    // Settings live in the query string, the camera in the hash, so a reload keeps both.
+    const params = new URLSearchParams(location.search);
+    const settings = {
+        tiles: params.get('tiles') ?? 'mlt-pre-tess',
+        projection: params.get('projection') ?? 'globe',
+        style: params.get('style') ?? 'osm-bright',
+        boundaries: params.get('boundaries') !== '0'
+    };
+
+    for (const id of ['tiles', 'projection', 'style']) {
+        const select = document.getElementById(id);
+        select.value = settings[id];
+        select.addEventListener('change', () => {
+            params.set(id, select.value);
+            location.search = params.toString();
+        });
+    }
+    const boundaries = document.getElementById('boundaries');
+    boundaries.checked = settings.boundaries;
+
     const map = new maplibregl.Map({
         container: 'map', // container id
-        style: 'https://demotiles.maplibre.org/tiles-mlt/plain.json', // style URL
-        center: [0, 0], // starting position [lng, lat]
-        zoom: 1, // starting zoom
+        style: `http://localhost:8080/style/${settings.style}/${settings.tiles}.json`, // style URL
+        center: [7.5, 51.4], // North Rhine-Westphalia, where the tiles are
+        zoom: 5.5, // low enough that tile edges are long on the globe
+        hash: true,
         maplibreLogo: true
+    });
+    map.showTileBoundaries = settings.boundaries;
+    boundaries.addEventListener('change', () => {
+        map.showTileBoundaries = boundaries.checked;
+        params.set('boundaries', boundaries.checked ? '1' : '0');
+        history.replaceState(null, '', `?${params}${location.hash}`);
+    });
+
+    map.on('style.load', () => {
+        map.setProjection({type: settings.projection});
     });
 </script>
 </body>
