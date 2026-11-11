@@ -11,6 +11,7 @@ import {ABORT_ERROR} from '../util/abort_error.ts';
 import {SubdivisionGranularitySetting} from '../render/subdivision_granularity_settings.ts';
 import {OverscaledTileID, CanonicalTileID} from '../tile/tile_id.ts';
 import {VectorTile} from '@mapbox/vector-tile';
+import {MLTVectorTile} from './vector_tile_mlt.ts';
 
 import type {TileParameters, WorkerTileParameters, WorkerTileResult, WorkerTileWithData} from './worker_source.ts';
 import type {IActor} from '../util/actor.ts';
@@ -265,8 +266,9 @@ describe('vector tile worker source', () => {
         await expect(loadPromise).resolves.toBeTruthy();
     });
 
-    test('VectorTileWorkerSource slices an overzoomed tile from the source maxzoom tile and encodes it as MVT', async () => {
+    test('VectorTileWorkerSource slices an overzoomed MLT tile from the source maxzoom tile and encodes it as MLT', async () => {
         const rawTileData = readTileFixture('../../integration/assets/tiles/mlt/5/17/10.mlt');
+        const sourceFeatureCount = new MLTVectorTile(rawTileData).layers.boundary.length;
         server.respondWith('http://localhost:2900/5/17/10.mlt', request => {
             request.respond(200, {'Content-Type': 'application/vnd.maplibre-tile'}, rawTileData as any);
         });
@@ -293,8 +295,11 @@ describe('vector tile worker source', () => {
         } as WorkerTileParameters) as WorkerTileWithData;
 
         expect(server.requests.map(request => request.url)).toEqual(['http://localhost:2900/5/17/10.mlt']);
-        expect(result.encoding).toBe('mvt');
-        expect(new VectorTile(new PbfReader(result.rawTileData)).layers.boundary.length).toBeGreaterThan(0);
+        expect(result.encoding).toBe('mlt');
+        const slicedFeatureCount = new MLTVectorTile(result.rawTileData).layers.boundary.length;
+        expect(slicedFeatureCount).toBeGreaterThan(0);
+        expect(slicedFeatureCount).toBeLessThan(sourceFeatureCount);
+        expect(result.buckets.map(bucket => bucket.layerIds)).toEqual([['boundary']]);
     });
 
     test('VectorTileWorkerSource.reloadTile of an overzoomed tile draws a source layer added after it loaded, without a new request', async () => {

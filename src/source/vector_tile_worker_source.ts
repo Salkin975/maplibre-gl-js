@@ -9,6 +9,7 @@ import {ensureError, extend} from '../util/util.ts';
 import {RequestPerformance} from '../util/request_performance.ts';
 import {VectorTileOverzoomed, sliceVectorTileLayer} from './vector_tile_overzoomed.ts';
 import {MLTVectorTile} from './vector_tile_mlt.ts';
+import {encodeMLTVectorTile} from './vector_tile_mlt_encoder.ts';
 
 import type {
     WorkerSource,
@@ -137,8 +138,8 @@ export class VectorTileWorkerSource implements WorkerSource {
         // we no longer need to store it in the worker or transfer additional copies of it.
         if (parseState) {
             const {rawData, cacheControl, resourceTiming} = parseState;
-            // Overzoomed tiles are always re-encoded to MVT protobuf by _getOverzoomTile
-            const encoding = params.overzoomParameters ? 'mvt' : params.encoding;
+            const isReencodedToMVT = !!params.overzoomParameters && params.encoding !== 'mlt';
+            const encoding = isReencodedToMVT ? 'mvt' : params.encoding;
             // Return a copy of rawData to the main thread to avoid clearing the worker's buffer
             result = extend({rawTileData: rawData.slice(0), encoding}, result, cacheControl, resourceTiming);
             this.tileState.removeParsing(workerTile.uid);
@@ -175,7 +176,8 @@ export class VectorTileWorkerSource implements WorkerSource {
     }
 
     /**
-     * If we are seeking a tile deeper than the source's max available canonical tile, get the overzoomed tile
+     * If we are seeking a tile deeper than the source's max available canonical tile, get the overzoomed tile.
+     * The slices are encoded in the format the source tile came in, see {@link _encodeOverzoomTile}.
      * @param params - the worker tile parameters
      * @param maxZoomVectorTile - the original vector tile at the source's max available canonical zoom
      * @returns the overzoomed tile and its raw data
@@ -199,13 +201,29 @@ export class VectorTileWorkerSource implements WorkerSource {
                 overzoomedVectorTile.addLayer(slicedTileLayer);
             }
         }
-        const overzoomedVectorTileResult = {
-            vectorTile: overzoomedVectorTile,
-            rawData: fromVectorTileJs(overzoomedVectorTile).buffer
-        };
+        const overzoomedVectorTileResult = this._encodeOverzoomTile(params, overzoomedVectorTile);
         this.overzoomedTileResultCache.set(cacheKey, overzoomedVectorTileResult);
 
         return overzoomedVectorTileResult;
+    }
+
+    /**
+     * Encodes the slices of an overzoomed tile, so that the main thread can read features back from them.
+     *
+     * The slices of an MLT tile are encoded as MLT and parsed from that encoding, which keeps the tile on
+     * the columnar path and keeps properties MVT has no type for, a nested map or list among them. The
+     * slices of any other tile are encoded as MVT.
+     */
+    private _encodeOverzoomTile(params: WorkerTileParameters, overzoomedVectorTile: VectorTileOverzoomed): LoadVectorTileResult {
+        if (params.encoding === 'mlt') {
+            const rawData = encodeMLTVectorTile(overzoomedVectorTile);
+            return {vectorTile: new MLTVectorTile(rawData), rawData};
+        }
+
+        return {
+            vectorTile: overzoomedVectorTile,
+            rawData: fromVectorTileJs(overzoomedVectorTile).buffer
+        };
     }
 
     /**
