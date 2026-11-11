@@ -1,7 +1,5 @@
 import {StyleLayer} from '../style_layer.ts';
 import {SymbolBucket, type SymbolFeature} from '../../data/bucket/symbol_bucket.ts';
-import {ColumnarSymbolBucket} from '../../data/bucket/columnar/columnar_symbol_bucket.ts';
-import {isColumnarBucketSupported} from '@maplibre/mlt';
 import {resolveTokens} from '../../util/resolve_tokens.ts';
 import properties, {type SymbolLayoutPropsPossiblyEvaluated, type SymbolPaintPropsPossiblyEvaluated} from './symbol_style_layer_properties.g.ts';
 import {
@@ -99,9 +97,7 @@ export class SymbolStyleLayer extends StyleLayer {
     }
 
     createBucket(parameters: BucketParameters<any>): SymbolBucket {
-        return isColumnarBucketSupported(parameters.encoding, this.filter, parameters.zoom, this.id)
-            ? new ColumnarSymbolBucket(parameters)
-            : new SymbolBucket(parameters);
+        return new SymbolBucket(parameters);
     }
 
     queryRadius(): number {

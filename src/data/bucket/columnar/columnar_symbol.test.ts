@@ -1,6 +1,6 @@
 import {describe, test, expect} from 'vitest';
 import {encodeTile, decodeTile} from '@maplibre/mlt';
-import {ColumnarSymbolBucket} from './columnar_symbol_bucket.ts';
+import {SymbolBucket} from '../symbol_bucket.ts';
 import {MLTVectorTileLayer} from '../../../source/vector_tile_mlt.ts';
 import {FeatureIndex} from '../../feature_index.ts';
 import {OverscaledTileID} from '../../../tile/tile_id.ts';
@@ -22,8 +22,8 @@ function encodeFeatures(): Uint8Array {
     }]);
 }
 
-describe('ColumnarSymbolBucket', () => {
-    test('selects, resolves and requests the same as SymbolBucket', () => {
+describe('SymbolBucket populated from the columns of an MLT layer', () => {
+    test('selects, resolves and requests the same as from the rows', () => {
         const {row, columnar} = populateBoth(SYMBOL_BUCKETS, decodeTile(encodeFeatures())[0]);
 
         expect(row.features).toHaveLength(5);
@@ -39,14 +39,14 @@ describe('ColumnarSymbolBucket', () => {
         expect(columnar.features.map(f => f.text)).toEqual(['Berlin', 'Ulm', 'Main St', 'Main St']);
     });
 
-    test('sorts by a data-driven symbol-sort-key, like SymbolBucket', () => {
+    test('sorts by a data-driven symbol-sort-key, like the rows', () => {
         const {row, columnar} = populateBoth(SYMBOL_BUCKETS, decodeTile(encodeFeatures())[0], undefined, {'symbol-sort-key': ['get', 'rank']});
 
         expect(columnar).toEqual(row);
         expect(columnar.features.map(f => f.sortKey)).toEqual([0, 0, 1, 2, 3]);
     });
 
-    test('merges adjacent segments of one name for symbol-placement: line, like SymbolBucket', () => {
+    test('merges adjacent segments of one name for symbol-placement: line, like the rows', () => {
         const {row, columnar} = populateBoth(SYMBOL_BUCKETS, decodeTile(encodeFeatures())[0], ['==', 'icon', 'road'], {'symbol-placement': 'line'});
 
         expect(columnar).toEqual(row);
@@ -56,17 +56,17 @@ describe('ColumnarSymbolBucket', () => {
     test('takes the ids from the promoteId of the source', () => {
         const options = createPopulateOptions([]);
         options.featureIndex = new FeatureIndex(new OverscaledTileID(0, 0, 0, 0, 0), 'name');
-        const bucket = new ColumnarSymbolBucket(bucketParameters(createSymbolLayer(['==', 'class', 'b'])));
+        const bucket = new SymbolBucket(bucketParameters(createSymbolLayer(['==', 'class', 'b'])));
 
         bucket.populate(new MLTVectorTileLayer(decodeTile(encodeFeatures())[0]), options, CANONICAL);
 
         expect(bucket.features.map(f => f.id)).toEqual(['Bonn']);
     });
 
-    test('populates from a row list through SymbolBucket when it is given one', () => {
+    test('populates a columnar bucket from a row list when it is given one', () => {
         const table = decodeTile(encodeFeatures())[0];
         const options = createPopulateOptions([]);
-        const bucket = new ColumnarSymbolBucket(bucketParameters(createSymbolLayer()));
+        const bucket = new SymbolBucket(bucketParameters(createSymbolLayer()));
 
         bucket.populate(rowsOf(new MLTVectorTileLayer(table)), options, CANONICAL);
 

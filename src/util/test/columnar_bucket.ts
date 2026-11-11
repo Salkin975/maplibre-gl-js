@@ -7,7 +7,6 @@ import {LineStyleLayer} from '../../style/style_layer/line_style_layer.ts';
 import {LineBucket} from '../../data/bucket/line_bucket.ts';
 import {SymbolStyleLayer} from '../../style/style_layer/symbol_style_layer.ts';
 import {SymbolBucket, type SymbolFeature} from '../../data/bucket/symbol_bucket.ts';
-import {ColumnarSymbolBucket} from '../../data/bucket/columnar/columnar_symbol_bucket.ts';
 import {MLTVectorTileLayer} from '../../source/vector_tile_mlt.ts';
 import {FeatureIndex} from '../../data/feature_index.ts';
 import {OverscaledTileID} from '../../tile/tile_id.ts';
@@ -28,17 +27,16 @@ export const ZOOM = 5;
 export const CANONICAL = {z: ZOOM, x: 0, y: 0} as CanonicalTileID;
 
 /**
- * A row-based bucket class and its columnar counterpart, with what a test compares between the two
+ * A bucket class and the style layer it draws, with what a test compares between two of its buckets
  * after populating one from a tile's rows and the other from its columns.
  */
-export type BucketPair<Layer extends TypedStyleLayer, B extends Bucket, Summary> = {
+export type BucketKind<Layer extends TypedStyleLayer, B extends Bucket, Summary> = {
     createLayer(filter?: FilterSpecification, layout?: Record<string, unknown>): Layer;
-    RowBucket: new (parameters: BucketParameters<Layer>) => B;
-    ColumnarBucket: new (parameters: BucketParameters<Layer>) => B;
+    Bucket: new (parameters: BucketParameters<Layer>) => B;
     summarize(bucket: B, options: PopulateParameters): Summary;
 };
 
-/** What a test compares of one bucket of a {@link BucketPair}, with the indices of the features it handed to the spatial index. */
+/** What a test compares of one bucket of a {@link BucketKind}, with the indices of the features it handed to the spatial index. */
 export type Populated<Summary> = Summary & {indexed: number[]};
 
 /** The arrays a fill bucket writes, byte for byte, and its segments. */
@@ -107,10 +105,9 @@ export function fillArrays(bucket: FillBucket): FillArrays {
 }
 
 /** `FillBucket`, populated from rows and from columns and compared by the arrays it writes. */
-export const FILL_BUCKETS: BucketPair<FillStyleLayer, FillBucket, FillArrays> = {
+export const FILL_BUCKETS: BucketKind<FillStyleLayer, FillBucket, FillArrays> = {
     createLayer: createFillLayer,
-    RowBucket: FillBucket,
-    ColumnarBucket: FillBucket,
+    Bucket: FillBucket,
     summarize: fillArrays
 };
 
@@ -140,10 +137,9 @@ export function lineArrays(bucket: LineBucket): LineArrays {
 }
 
 /** `LineBucket`, populated from rows and from columns and compared by the arrays it writes. */
-export const LINE_BUCKETS: BucketPair<LineStyleLayer, LineBucket, LineArrays> = {
+export const LINE_BUCKETS: BucketKind<LineStyleLayer, LineBucket, LineArrays> = {
     createLayer: createLineLayer,
-    RowBucket: LineBucket,
-    ColumnarBucket: LineBucket,
+    Bucket: LineBucket,
     summarize: lineArrays
 };
 
@@ -173,37 +169,36 @@ export function symbolSummary(bucket: SymbolBucket, options: PopulateParameters)
     };
 }
 
-/** `SymbolBucket` and `ColumnarSymbolBucket`, compared by what they select and request. */
-export const SYMBOL_BUCKETS: BucketPair<SymbolStyleLayer, SymbolBucket, SymbolSummary> = {
+/** `SymbolBucket`, populated from rows and from columns and compared by what it selects and requests. */
+export const SYMBOL_BUCKETS: BucketKind<SymbolStyleLayer, SymbolBucket, SymbolSummary> = {
     createLayer: createSymbolLayer,
-    RowBucket: SymbolBucket,
-    ColumnarBucket: ColumnarSymbolBucket,
+    Bucket: SymbolBucket,
     summarize: symbolSummary
 };
 
 /**
- * Populates a row-based bucket from the rows of `table` and a columnar one from its columns, both of
- * a layer with the given filter and layout, and returns what each wrote along with the indices of the
- * features each handed to the spatial index.
+ * Populates one bucket of `kind` from the rows of `table` and one from its columns, both of a layer
+ * with the given filter and layout, and returns what each wrote along with the indices of the features
+ * each handed to the spatial index.
  */
 export function populateBoth<Layer extends TypedStyleLayer, B extends Bucket, Summary>(
-    pair: BucketPair<Layer, B, Summary>,
+    kind: BucketKind<Layer, B, Summary>,
     table: FeatureTable,
     filter?: FilterSpecification,
     layout: Record<string, unknown> = {}
 ): {row: Populated<Summary>; columnar: Populated<Summary>} {
     const sourceLayer = new MLTVectorTileLayer(table);
 
-    const row = new pair.RowBucket(bucketParameters(pair.createLayer(filter, layout)));
+    const row = new kind.Bucket(bucketParameters(kind.createLayer(filter, layout)));
     const rowOptions = populateOptions();
     row.populate(rowsOf(sourceLayer), rowOptions.options, CANONICAL);
 
-    const columnar = new pair.ColumnarBucket(bucketParameters(pair.createLayer(filter, layout)));
+    const columnar = new kind.Bucket(bucketParameters(kind.createLayer(filter, layout)));
     const columnarOptions = populateOptions();
     columnar.populate(sourceLayer, columnarOptions.options, CANONICAL);
 
     return {
-        row: {...pair.summarize(row, rowOptions.options), indexed: rowOptions.insert.mock.calls.map(call => call[2])},
-        columnar: {...pair.summarize(columnar, columnarOptions.options), indexed: columnarOptions.insert.mock.calls.map(call => call[2])}
+        row: {...kind.summarize(row, rowOptions.options), indexed: rowOptions.insert.mock.calls.map(call => call[2])},
+        columnar: {...kind.summarize(columnar, columnarOptions.options), indexed: columnarOptions.insert.mock.calls.map(call => call[2])}
     };
 }

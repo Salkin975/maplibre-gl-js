@@ -33,6 +33,9 @@ import {getSizeData, MAX_PACKED_SIZE, MAX_GLYPHS} from '../../symbol/symbol_size
 import {performSymbolLayout} from '../../symbol/symbol_layout.ts';
 import {isOutsideTile} from '../extent_bounds.ts';
 import {register} from '../../util/web_worker_transfer.ts';
+import {isColumnarBucketSupported} from '@maplibre/mlt';
+import {isRowFeatureList} from './columnar/columnar_populate.ts';
+import {populateColumnarSymbol} from './columnar/columnar_symbol.ts';
 import {EvaluationParameters} from '../../style/evaluation_parameters.ts';
 import {Formatted, ResolvedImage} from '@maplibre/maplibre-gl-style-spec';
 import {getOverlapMode} from '../../style/style_layer/overlap_mode.ts';
@@ -58,6 +61,7 @@ import type {FeatureStates} from '../../source/source_state.ts';
 import type {ImagePosition} from '../../render/image_atlas.ts';
 import type {VectorTileFeatureLike, VectorTileLayerLike} from '@maplibre/vt-pbf';
 import type {EvaluationFeature} from '../evaluation_feature.ts';
+import type {MLTVectorTileLayer} from '../../source/vector_tile_mlt.ts';
 
 export type SingleCollisionBox = {
     x1: number;
@@ -359,6 +363,7 @@ export class SymbolBucket implements Bucket {
     textCollisionBox: CollisionBuffers;
     iconCollisionBox: CollisionBuffers;
     uploaded: boolean;
+    isColumnar: boolean;
     sourceLayerIndex: number;
     sourceID: string;
     symbolInstanceIndexes: number[];
@@ -375,6 +380,7 @@ export class SymbolBucket implements Bucket {
         this.index = options.index;
         this.pixelRatio = options.pixelRatio;
         this.sourceLayerIndex = options.sourceLayerIndex;
+        this.isColumnar = isColumnarBucketSupported(options.encoding, this.layers[0].filter, options.zoom, this.layers[0].id);
         this.hasDependencies = true;
         this.hasRTLText = false;
         this.maxHeightOffset = 0;
@@ -468,7 +474,12 @@ export class SymbolBucket implements Bucket {
         }
     }
 
-    populate(features: IndexedFeature[], options: PopulateParameters, canonical: CanonicalTileID): void {
+    populate(features: IndexedFeature[] | MLTVectorTileLayer, options: PopulateParameters, canonical: CanonicalTileID): void {
+        if (!isRowFeatureList(features)) {
+            populateColumnarSymbol(this, features, options, canonical);
+            return;
+        }
+
         const layer = this.layers[0];
         const hasText = this.layoutHasText();
         const hasIcon = this.layoutHasIcon();
@@ -496,7 +507,7 @@ export class SymbolBucket implements Bucket {
     }
 
     /** Whether the layer can draw text at all: it has a `text-field` and a font to draw it with. */
-    protected layoutHasText(): boolean {
+    layoutHasText(): boolean {
         const layout = this.layers[0].layout;
         const textFont = layout.get('text-font');
         const textField = layout.get('text-field');
@@ -511,7 +522,7 @@ export class SymbolBucket implements Bucket {
      * that a null result still fires `styleimagemissing`; an empty `parameters` is the only sign that
      * none was defined, since a `coalesce` without a valid image returns null as well.
      */
-    protected layoutHasIcon(): boolean {
+    layoutHasIcon(): boolean {
         const iconImage = this.layers[0].layout.get('icon-image');
         return iconImage.value.kind !== 'constant' || !!iconImage.value.value || Object.keys(iconImage.parameters).length > 0;
     }
@@ -527,7 +538,7 @@ export class SymbolBucket implements Bucket {
      * @param hasText - what {@link layoutHasText} returned for this `populate()`
      * @param hasIcon - what {@link layoutHasIcon} returned for this `populate()`
      */
-    protected addSymbolFeature(
+    addSymbolFeature(
         feature: VectorTileFeatureLike,
         evaluationFeature: EvaluationFeature,
         id: any,
@@ -616,7 +627,7 @@ export class SymbolBucket implements Bucket {
      * Merges adjacent line features with the same text for `symbol-placement: line`, then orders the
      * features by `symbol-sort-key`. Merging can still change the list, so the order is settled only here.
      */
-    protected finishSymbolFeatures(): void {
+    finishSymbolFeatures(): void {
         if (this.layers[0].layout.get('symbol-placement') === 'line') {
             // Merge adjacent lines with the same text to improve labeling.
             // It's better to place labels on one long line than on many short segments.
@@ -1056,7 +1067,7 @@ function isEveryPointOutsideTile(geometry: Point[][]): boolean {
 }
 
 register('SymbolBucket', SymbolBucket, {
-    omit: ['layers', 'collisionBoxArray', 'features', 'compareText']
+    omit: ['layers', 'collisionBoxArray', 'features', 'compareText', 'isColumnar']
 });
 
 export {addDynamicAttributes};
