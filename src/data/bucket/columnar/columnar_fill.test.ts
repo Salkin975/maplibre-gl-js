@@ -3,7 +3,6 @@ import {encodeTile, decodeTile, type GpuVector} from '@maplibre/mlt';
 import {FillStyleLayer} from '../../../style/style_layer/fill_style_layer.ts';
 import {EvaluationParameters} from '../../../style/evaluation_parameters.ts';
 import {FillBucket} from '../fill_bucket.ts';
-import {ColumnarFillBucket} from './columnar_fill_bucket.ts';
 import {MLTVectorTileLayer} from '../../../source/vector_tile_mlt.ts';
 import {SubdivisionGranularityExpression, SubdivisionGranularitySetting} from '../../../render/subdivision_granularity_settings.ts';
 import {preTessellatedTables, triangleOnlyLayer} from '../../../util/test/mlt.ts';
@@ -101,12 +100,12 @@ function indexedBoxes(bucket: Bucket, features: IndexedFeature[] | MLTVectorTile
     return boxes;
 }
 
-describe('ColumnarFillBucket on ring-encoded polygons', () => {
+describe('FillBucket populated from the columns of ring-encoded polygons', () => {
     afterEach(() => {
         vi.restoreAllMocks();
     });
 
-    test('writes the same arrays and indexes the same features as FillBucket', () => {
+    test('writes the same arrays and indexes the same features as from the rows', () => {
         const {row, columnar} = populateBoth(FILL_BUCKETS, decodeTile(encodePolygons())[0]);
 
         expect(row.vertices.length).toBeGreaterThan(0);
@@ -121,7 +120,7 @@ describe('ColumnarFillBucket on ring-encoded polygons', () => {
         expect(columnar.indexed).toEqual([0, 2]);
     });
 
-    test('orders the features by a data-driven sort key, like FillBucket', () => {
+    test('orders the features by a data-driven sort key, like the rows', () => {
         const {row, columnar} = populateBoth(FILL_BUCKETS, decodeTile(encodePolygons())[0], undefined, {'fill-sort-key': ['get', 'rank']});
 
         expect(columnar).toEqual(row);
@@ -132,7 +131,7 @@ describe('ColumnarFillBucket on ring-encoded polygons', () => {
         const feature = vi.spyOn(MLTVectorTileLayer.prototype, 'feature');
         const table = decodeTile(encodePolygons())[0];
         const {options, insert} = populateOptions();
-        const bucket = new ColumnarFillBucket(bucketParameters(createFillLayer()));
+        const bucket = new FillBucket(bucketParameters(createFillLayer()));
 
         bucket.populate(new MLTVectorTileLayer(table), options, CANONICAL);
 
@@ -140,7 +139,7 @@ describe('ColumnarFillBucket on ring-encoded polygons', () => {
         expect(insert.mock.calls.map(call => call[0])).toEqual(feature.mock.results.map(result => result.value));
     });
 
-    test('fills lines and indexes points like FillBucket, which does not tell geometry types apart', () => {
+    test('fills lines and indexes points like the rows, since a fill does not tell geometry types apart', () => {
         const table = decodeTile(encodeTile([{
             name: 'land',
             extent: 4096,
@@ -157,11 +156,11 @@ describe('ColumnarFillBucket on ring-encoded polygons', () => {
         expect(columnar.indexed).toEqual([0, 1, 2]);
     });
 
-    test('populates from a row list through FillBucket when it is given one', () => {
+    test('populates a columnar bucket from a row list when it is given one', () => {
         const table = decodeTile(encodePolygons())[0];
         const sourceLayer = new MLTVectorTileLayer(table);
         const {options, insert} = populateOptions();
-        const bucket = new ColumnarFillBucket(bucketParameters(createFillLayer()));
+        const bucket = new FillBucket(bucketParameters(createFillLayer()));
 
         bucket.populate(rowsOf(sourceLayer), options, CANONICAL);
 
@@ -170,19 +169,19 @@ describe('ColumnarFillBucket on ring-encoded polygons', () => {
     });
 });
 
-describe('ColumnarFillBucket on ring-encoded polygons in a tile away from the poles', () => {
+describe('FillBucket populated from the columns of ring-encoded polygons in a tile away from the poles', () => {
     afterEach(() => {
         vi.restoreAllMocks();
     });
 
-    test('draws the same triangles and outlines and indexes the same boxes as FillBucket', () => {
+    test('draws the same triangles and outlines and indexes the same boxes as from the rows', () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         for (const table of [decodeTile(encodePolygons())[0], decodeTile(encodeMultiPolygons())[0]]) {
             const rowOptions = populateOptions();
             const row = new FillBucket(bucketParameters(createFillLayer()));
             row.populate(rowsOf(new MLTVectorTileLayer(table)), rowOptions.options, INNER_CANONICAL);
             const columnarOptions = populateOptions();
-            const columnar = new ColumnarFillBucket(bucketParameters(createFillLayer()));
+            const columnar = new FillBucket(bucketParameters(createFillLayer()));
             columnar.populate(new MLTVectorTileLayer(table), columnarOptions.options, INNER_CANONICAL);
 
             expect(drawn(row).triangles.length).toBeGreaterThan(0);
@@ -192,17 +191,17 @@ describe('ColumnarFillBucket on ring-encoded polygons in a tile away from the po
         }
     });
 
-    test('indexes a pattern fill, which it writes only later, with the same boxes as FillBucket', () => {
+    test('indexes a pattern fill, which it writes only later, with the same boxes as from the rows', () => {
         const table = decodeTile(encodeMultiPolygons())[0];
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const row = indexedBoxes(new FillBucket(bucketParameters(patternLayer())), rowsOf(new MLTVectorTileLayer(table)));
-        const columnar = indexedBoxes(new ColumnarFillBucket(bucketParameters(patternLayer())), new MLTVectorTileLayer(table));
+        const columnar = indexedBoxes(new FillBucket(bucketParameters(patternLayer())), new MLTVectorTileLayer(table));
 
         expect(columnar).toEqual(row);
         expect(columnar.flat().length).toBeGreaterThan(0);
     });
 
-    test('writes what FillBucket writes when the tile is subdivided', () => {
+    test('writes what the rows give when the tile is subdivided', () => {
         const table = decodeTile(encodePolygons())[0];
         const subdivided = new SubdivisionGranularitySetting({
             fill: new SubdivisionGranularityExpression(128, 2),
@@ -217,7 +216,7 @@ describe('ColumnarFillBucket on ring-encoded polygons in a tile away from the po
         row.populate(rowsOf(new MLTVectorTileLayer(table)), rowOptions.options, INNER_CANONICAL);
         const columnarOptions = populateOptions();
         columnarOptions.options.subdivisionGranularity = subdivided;
-        const columnar = new ColumnarFillBucket(bucketParameters(createFillLayer()));
+        const columnar = new FillBucket(bucketParameters(createFillLayer()));
         columnar.populate(new MLTVectorTileLayer(table), columnarOptions.options, INNER_CANONICAL);
 
         expect(fillArrays(columnar)).toEqual(fillArrays(row));
@@ -229,22 +228,20 @@ describe('FillStyleLayer.createBucket', () => {
         vi.restoreAllMocks();
     });
 
-    test('chooses the columnar bucket for an MLT layer whose filter can be planned', () => {
+    test('creates a columnar bucket for an MLT layer whose filter can be planned', () => {
         const layer = createFillLayer(['==', 'class', 'a']);
 
         const bucket: Bucket = layer.createBucket(bucketParameters(layer, 'mlt'));
 
-        expect(bucket).toBeInstanceOf(ColumnarFillBucket);
         expect(bucket.isColumnar).toBe(true);
     });
 
-    test('chooses the row-based bucket for an MVT layer', () => {
+    test('creates a row-based bucket for an MVT layer', () => {
         const layer = createFillLayer(['==', 'class', 'a']);
 
         const bucket: Bucket = layer.createBucket(bucketParameters(layer, 'mvt'));
 
-        expect(bucket).not.toBeInstanceOf(ColumnarFillBucket);
-        expect(bucket.isColumnar).toBeUndefined();
+        expect(bucket.isColumnar).toBe(false);
     });
 
     test('falls back to the row-based bucket and says so once when the filter cannot be planned', () => {
@@ -254,13 +251,13 @@ describe('FillStyleLayer.createBucket', () => {
         const first = layer.createBucket(bucketParameters(layer, 'mlt'));
         layer.createBucket(bucketParameters(layer, 'mlt'));
 
-        expect(first).not.toBeInstanceOf(ColumnarFillBucket);
+        expect(first.isColumnar).toBe(false);
         expect(warn).toHaveBeenCalledTimes(1);
         expect(warn.mock.calls[0][0]).toContain('layer "fill": filter is not supported');
     });
 });
 
-describe('ColumnarFillBucket on a pre-tessellated tile', () => {
+describe('FillBucket populated from the columns of a pre-tessellated tile', () => {
     test('writes the tile\'s own triangles and indexes every feature by its bounding box', () => {
         const tables = preTessellatedTables();
         expect(tables.length).toBeGreaterThan(0);
@@ -268,7 +265,7 @@ describe('ColumnarFillBucket on a pre-tessellated tile', () => {
         for (const table of tables) {
             const geometryVector = table.geometryVector as GpuVector;
             const {options, insert} = populateOptions();
-            const bucket = new ColumnarFillBucket(bucketParameters(createFillLayer()));
+            const bucket = new FillBucket(bucketParameters(createFillLayer()));
 
             bucket.populate(new MLTVectorTileLayer(table), options, INNER_CANONICAL);
 
@@ -306,7 +303,7 @@ describe('ColumnarFillBucket on a pre-tessellated tile', () => {
                 row.populate(rowsOf(new MLTVectorTileLayer(table)), rowOptions.options, canonical);
                 const columnarOptions = populateOptions();
                 columnarOptions.options.subdivisionGranularity = granularity;
-                const columnar = new ColumnarFillBucket(bucketParameters(createFillLayer()));
+                const columnar = new FillBucket(bucketParameters(createFillLayer()));
                 columnar.populate(new MLTVectorTileLayer(table), columnarOptions.options, canonical);
 
                 expect(fillArrays(row).triangles.length).toBeGreaterThan(0);
@@ -318,7 +315,7 @@ describe('ColumnarFillBucket on a pre-tessellated tile', () => {
     });
 });
 
-describe('ColumnarFillBucket on a pre-tessellated layer without ring topology', () => {
+describe('FillBucket populated from the columns of a pre-tessellated layer without ring topology', () => {
     afterEach(() => {
         vi.restoreAllMocks();
     });
@@ -326,7 +323,7 @@ describe('ColumnarFillBucket on a pre-tessellated layer without ring topology', 
     test('draws the triangles, has no outline and says so', () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
         const {options, insert} = populateOptions();
-        const bucket = new ColumnarFillBucket(bucketParameters(createFillLayer()));
+        const bucket = new FillBucket(bucketParameters(createFillLayer()));
 
         bucket.populate(triangleOnlyLayer(), options, INNER_CANONICAL);
 

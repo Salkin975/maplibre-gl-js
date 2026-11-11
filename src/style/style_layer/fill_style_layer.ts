@@ -3,8 +3,6 @@ import {FillBucket} from '../../data/bucket/fill_bucket.ts';
 import {polygonIntersectsMultiPolygon} from '../../util/intersection_tests.ts';
 import {translateDistance, translate} from '../query_utils.ts';
 import properties, {type FillLayoutPropsPossiblyEvaluated, type FillPaintPropsPossiblyEvaluated} from './fill_style_layer_properties.g.ts';
-import {ColumnarFillBucket} from '../../data/bucket/columnar/columnar_fill_bucket.ts';
-import {isColumnarBucketSupported} from '@maplibre/mlt';
 
 import type {Transitionable, Transitioning, Layout, PossiblyEvaluated} from '../properties.ts';
 import type {LayerSpecification} from '@maplibre/maplibre-gl-style-spec';
@@ -36,9 +34,7 @@ export class FillStyleLayer extends StyleLayer {
     }
 
     createBucket(parameters: BucketParameters<any>): FillBucket {
-        return isColumnarBucketSupported(parameters.encoding, this.filter, parameters.zoom, this.id)
-            ? new ColumnarFillBucket(parameters)
-            : new FillBucket(parameters);
+        return new FillBucket(parameters);
     }
 
     queryRadius(): number {

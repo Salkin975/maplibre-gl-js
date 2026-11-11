@@ -13,6 +13,9 @@ import {EvaluationParameters} from '../../style/evaluation_parameters.ts';
 import {subdividePolygon} from '../../render/subdivision.ts';
 import {fillLargeMeshArrays} from '../../render/fill_large_mesh_arrays.ts';
 import {warnOnce} from '../../util/util.ts';
+import {isColumnarBucketSupported} from '@maplibre/mlt';
+import {isRowFeatureList} from './columnar/columnar_populate.ts';
+import {isPolygon, populateColumnarFill, writeDirectFill, type DirectFillGeometry} from './columnar/columnar_fill.ts';
 
 import type {CanonicalTileID} from '../../tile/tile_id.ts';
 import type {
@@ -34,6 +37,7 @@ import type {SubdivisionGranularitySetting} from '../../render/subdivision_granu
 import type {VectorTileFeatureLike, VectorTileLayerLike} from '@maplibre/vt-pbf';
 import type {GetImagesResponse} from '../../util/actor_messages.ts';
 import type {StyleImage} from '../../style/style_image.ts';
+import type {MLTVectorTileLayer} from '../../source/vector_tile_mlt.ts';
 
 export class FillBucket implements Bucket {
     index: number;
@@ -44,6 +48,11 @@ export class FillBucket implements Bucket {
     stateDependentLayers: FillStyleLayer[];
     stateDependentLayerIds: string[];
     patternFeatures: BucketFeature[];
+    isColumnar: boolean;
+    /** The position of the bucket's source layer in the tile, which a feature read from an MLT layer's columns is indexed under. */
+    sourceLayerIndex: number;
+    /** Set while polygons are written straight from an MLT tile's geometry, see {@link populateColumnarFill}. */
+    directGeometry: DirectFillGeometry | undefined;
 
     layoutVertexArray: FillLayoutArray;
     layoutVertexBuffer: VertexBuffer;
@@ -70,6 +79,9 @@ export class FillBucket implements Bucket {
         this.hasDependencies = false;
         this.sdfPatterns = {};
         this.patternFeatures = [];
+        this.isColumnar = isColumnarBucketSupported(options.encoding, this.layers[0].filter, options.zoom, this.layers[0].id);
+        this.sourceLayerIndex = options.sourceLayerIndex;
+        this.directGeometry = undefined;
 
         this.layoutVertexArray = new FillLayoutArray();
         this.indexArray = new TriangleIndexArray();
@@ -80,7 +92,12 @@ export class FillBucket implements Bucket {
         this.stateDependentLayerIds = this.layers.filter((l) => l.isStateDependent()).map((l) => l.id);
     }
 
-    populate(features: IndexedFeature[], options: PopulateParameters, canonical: CanonicalTileID): void {
+    populate(features: IndexedFeature[] | MLTVectorTileLayer, options: PopulateParameters, canonical: CanonicalTileID): void {
+        if (!isRowFeatureList(features)) {
+            populateColumnarFill(this, features, options, canonical);
+            return;
+        }
+
         const fillSortKey = this.layers[0].layout.get('fill-sort-key');
         const sortFeaturesByKey = !fillSortKey.isConstant();
         const bucketFeatures: BucketFeature[] = [];
@@ -118,7 +135,7 @@ export class FillBucket implements Bucket {
      * `queryRenderedFeatures`. A feature whose pattern is not yet in the atlas is kept in
      * `patternFeatures` and written by `addFeatures()` once it is.
      */
-    protected addBucketFeatures(
+    addBucketFeatures(
         bucketFeatures: BucketFeature[],
         featureAt: (index: number) => VectorTileFeatureLike,
         options: PopulateParameters,
@@ -159,6 +176,7 @@ export class FillBucket implements Bucket {
         for (const feature of this.patternFeatures) {
             this.addFeature(feature, feature.geometry, feature.index, canonical, patternPositions, options.subdivisionGranularity);
         }
+        this.directGeometry = undefined;
     }
 
     private detectSdfPatterns(imageMap: GetImagesResponse): void {
@@ -222,6 +240,16 @@ export class FillBucket implements Bucket {
     addFeature(feature: BucketFeature, geometry: Point[][], index: number, canonical: CanonicalTileID, imagePositions: {
         [_: string]: ImagePosition;
     }, subdivisionGranularity: SubdivisionGranularitySetting): void {
+        if (this.directGeometry && isPolygon(feature)) {
+            writeDirectFill(this, this.directGeometry, index);
+        } else {
+            this.addPolygons(geometry, canonical, subdivisionGranularity);
+        }
+        this.programConfigurations.populatePaintArrays(this.layoutVertexArray.length, feature, index, {imagePositions, canonical});
+    }
+
+    /** Triangulates the polygons that `geometry`'s rings make up, subdivided for the globe, and writes them with their outlines. */
+    private addPolygons(geometry: Point[][], canonical: CanonicalTileID, subdivisionGranularity: SubdivisionGranularitySetting): void {
         for (const polygon of classifyRings(geometry, EARCUT_MAX_RINGS)) {
             const subdivided = subdividePolygon(polygon, canonical, subdivisionGranularity.fill.getGranularityForZoomLevel(canonical.z));
 
@@ -241,8 +269,7 @@ export class FillBucket implements Bucket {
                 subdivided.indicesLineList,
             );
         }
-        this.programConfigurations.populatePaintArrays(this.layoutVertexArray.length, feature, index, {imagePositions, canonical});
     }
 }
 
-register('FillBucket', FillBucket, {omit: ['layers', 'patternFeatures']});
+register('FillBucket', FillBucket, {omit: ['layers', 'patternFeatures', 'isColumnar', 'sourceLayerIndex', 'directGeometry']});

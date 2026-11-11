@@ -3,7 +3,6 @@ import {FillStyleLayer} from '../../style/style_layer/fill_style_layer.ts';
 import {EvaluationParameters} from '../../style/evaluation_parameters.ts';
 import {CollisionBoxArray} from '../../data/array_types.g.ts';
 import {FillBucket} from '../../data/bucket/fill_bucket.ts';
-import {ColumnarFillBucket} from '../../data/bucket/columnar/columnar_fill_bucket.ts';
 import {LineStyleLayer} from '../../style/style_layer/line_style_layer.ts';
 import {LineBucket} from '../../data/bucket/line_bucket.ts';
 import {ColumnarLineBucket} from '../../data/bucket/columnar/columnar_line_bucket.ts';
@@ -108,11 +107,11 @@ export function fillArrays(bucket: FillBucket): FillArrays {
     };
 }
 
-/** `FillBucket` and `ColumnarFillBucket`, compared by the arrays they write. */
+/** `FillBucket`, populated from rows and from columns and compared by the arrays it writes. */
 export const FILL_BUCKETS: BucketPair<FillStyleLayer, FillBucket, FillArrays> = {
     createLayer: createFillLayer,
     RowBucket: FillBucket,
-    ColumnarBucket: ColumnarFillBucket,
+    ColumnarBucket: FillBucket,
     summarize: fillArrays
 };
 
