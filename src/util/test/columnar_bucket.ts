@@ -5,7 +5,6 @@ import {CollisionBoxArray} from '../../data/array_types.g.ts';
 import {FillBucket} from '../../data/bucket/fill_bucket.ts';
 import {LineStyleLayer} from '../../style/style_layer/line_style_layer.ts';
 import {LineBucket} from '../../data/bucket/line_bucket.ts';
-import {ColumnarLineBucket} from '../../data/bucket/columnar/columnar_line_bucket.ts';
 import {SymbolStyleLayer} from '../../style/style_layer/symbol_style_layer.ts';
 import {SymbolBucket, type SymbolFeature} from '../../data/bucket/symbol_bucket.ts';
 import {ColumnarSymbolBucket} from '../../data/bucket/columnar/columnar_symbol_bucket.ts';
@@ -140,11 +139,11 @@ export function lineArrays(bucket: LineBucket): LineArrays {
     };
 }
 
-/** `LineBucket` and `ColumnarLineBucket`, compared by the arrays they write. */
+/** `LineBucket`, populated from rows and from columns and compared by the arrays it writes. */
 export const LINE_BUCKETS: BucketPair<LineStyleLayer, LineBucket, LineArrays> = {
     createLayer: createLineLayer,
     RowBucket: LineBucket,
-    ColumnarBucket: ColumnarLineBucket,
+    ColumnarBucket: LineBucket,
     summarize: lineArrays
 };
 

@@ -134,18 +134,3 @@ export function materializeSelectedFeatures(
 
     return bucketFeatures;
 }
-
-/** Fields every columnar bucket carries but never has to send to the main thread - read only worker-side during `populate()`. */
-const COLUMNAR_ONLY_FIELDS = ['isColumnar', 'sourceLayerIndex'] as const;
-
-/**
- * Extends a bucket's own `register()` omit list with the fields every columnar bucket must not
- * transfer. `register()` expects a flat list per class, since a subclass does not inherit its base
- * class's omissions, so `baseOmit` (e.g. `FillBucket`'s `['layers', 'patternFeatures']`) has to be
- * passed in explicitly.
- */
-export function columnarTransferOmitList<T extends {isColumnar: boolean; sourceLayerIndex: number}>(
-    baseOmit: ReadonlyArray<keyof T>,
-): Array<keyof T> {
-    return [...baseOmit, ...COLUMNAR_ONLY_FIELDS];
-}

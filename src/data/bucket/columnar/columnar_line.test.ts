@@ -2,7 +2,6 @@ import {describe, test, expect, vi, afterEach} from 'vitest';
 import {encodeTile, decodeTile} from '@maplibre/mlt';
 import {GEOJSONVT_CLIP_END, GEOJSONVT_CLIP_START} from '@maplibre/geojson-vt';
 import {LineBucket} from '../line_bucket.ts';
-import {ColumnarLineBucket} from './columnar_line_bucket.ts';
 import {MLTVectorTileLayer} from '../../../source/vector_tile_mlt.ts';
 import {CANONICAL, LINE_BUCKETS, bucketParameters, bytes, createLineLayer, lineArrays, populateBoth, populateOptions, rowsOf} from '../../../util/test/columnar_bucket.ts';
 
@@ -19,12 +18,12 @@ function encodeFeatures(): Uint8Array {
     }]);
 }
 
-describe('ColumnarLineBucket', () => {
+describe('LineBucket populated from the columns of an MLT layer', () => {
     afterEach(() => {
         vi.restoreAllMocks();
     });
 
-    test('writes the same arrays and indexes the same features as LineBucket', () => {
+    test('writes the same arrays and indexes the same features as from the rows', () => {
         const {row, columnar} = populateBoth(LINE_BUCKETS, decodeTile(encodeFeatures())[0]);
 
         expect(row.vertices.length).toBeGreaterThan(0);
@@ -57,7 +56,7 @@ describe('ColumnarLineBucket', () => {
         expect(columnar.indexed).toEqual([0, 2]);
     });
 
-    test('orders the features by a data-driven sort key, like LineBucket', () => {
+    test('orders the features by a data-driven sort key, like the rows', () => {
         const {row, columnar} = populateBoth(LINE_BUCKETS, decodeTile(encodeFeatures())[0], undefined, {'line-sort-key': ['get', 'rank']});
 
         expect(columnar).toEqual(row);
@@ -67,7 +66,7 @@ describe('ColumnarLineBucket', () => {
     test('reads each selected feature once and hands the same object to the spatial index', () => {
         const feature = vi.spyOn(MLTVectorTileLayer.prototype, 'feature');
         const {options, insert} = populateOptions();
-        const bucket = new ColumnarLineBucket(bucketParameters(createLineLayer()));
+        const bucket = new LineBucket(bucketParameters(createLineLayer()));
 
         bucket.populate(new MLTVectorTileLayer(decodeTile(encodeFeatures())[0]), options, CANONICAL);
 
@@ -75,7 +74,7 @@ describe('ColumnarLineBucket', () => {
         expect(insert.mock.calls.map(call => call[0])).toEqual(feature.mock.results.map(result => result.value));
     });
 
-    test('reads the clips of a line that geojson-vt cut, like LineBucket', () => {
+    test('reads the clips of a line that geojson-vt cut, like the rows', () => {
         const table = decodeTile(encodeTile([{
             name: 'roads',
             extent: 4096,
@@ -85,7 +84,7 @@ describe('ColumnarLineBucket', () => {
         }]))[0];
         const row = new LineBucket(bucketParameters(createLineLayer()));
         row.populate(rowsOf(new MLTVectorTileLayer(table)), populateOptions().options, CANONICAL);
-        const columnar = new ColumnarLineBucket(bucketParameters(createLineLayer()));
+        const columnar = new LineBucket(bucketParameters(createLineLayer()));
 
         columnar.populate(new MLTVectorTileLayer(table), populateOptions().options, CANONICAL);
 
@@ -94,10 +93,10 @@ describe('ColumnarLineBucket', () => {
         expect(lineArrays(columnar)).toEqual(lineArrays(row));
     });
 
-    test('populates from a row list through LineBucket when it is given one', () => {
+    test('populates a columnar bucket from a row list when it is given one', () => {
         const table = decodeTile(encodeFeatures())[0];
         const {options, insert} = populateOptions();
-        const bucket = new ColumnarLineBucket(bucketParameters(createLineLayer()));
+        const bucket = new LineBucket(bucketParameters(createLineLayer()));
 
         bucket.populate(rowsOf(new MLTVectorTileLayer(table)), options, CANONICAL);
 

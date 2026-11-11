@@ -5,7 +5,6 @@ import {FeatureIndex} from '../../feature_index.ts';
 import {OverscaledTileID} from '../../../tile/tile_id.ts';
 import {preTessellatedTables} from '../../../util/test/mlt.ts';
 import {
-    columnarTransferOmitList,
     isRowFeatureList,
     loadGeometryOrEmpty,
     materializeSelectedFeatures,
@@ -210,14 +209,5 @@ describe('loadGeometryOrEmpty', () => {
         expect(warn).toHaveBeenCalledTimes(1);
         expect(warn.mock.calls[0][0]).toContain('4242');
         expect(warn.mock.calls[0][0]).toContain('no ring topology');
-    });
-});
-
-describe('columnarTransferOmitList', () => {
-    test('adds the worker-only fields to the omit list of the bucket class', () => {
-        type Bucket = {layers: unknown; patternFeatures: unknown; isColumnar: boolean; sourceLayerIndex: number};
-
-        expect(columnarTransferOmitList<Bucket>(['layers', 'patternFeatures']))
-            .toEqual(['layers', 'patternFeatures', 'isColumnar', 'sourceLayerIndex']);
     });
 });

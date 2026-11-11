@@ -1,7 +1,5 @@
 import {type QueryIntersectsFeatureParams, StyleLayer} from '../style_layer.ts';
 import {LineBucket} from '../../data/bucket/line_bucket.ts';
-import {ColumnarLineBucket} from '../../data/bucket/columnar/columnar_line_bucket.ts';
-import {isColumnarBucketSupported} from '@maplibre/mlt';
 import {polygonIntersectsBufferedMultiLine} from '../../util/intersection_tests.ts';
 import {getMaximumPaintValue, translateDistance, translate, offsetLine} from '../query_utils.ts';
 import properties, {type LineLayoutPropsPossiblyEvaluated, type LinePaintPropsPossiblyEvaluated} from './line_style_layer_properties.g.ts';
@@ -81,9 +79,7 @@ export class LineStyleLayer extends StyleLayer {
     }
 
     createBucket(parameters: BucketParameters<any>): LineBucket {
-        return isColumnarBucketSupported(parameters.encoding, this.filter, parameters.zoom, this.id)
-            ? new ColumnarLineBucket(parameters)
-            : new LineBucket(parameters);
+        return new LineBucket(parameters);
     }
 
     queryRadius(bucket: Bucket): number {

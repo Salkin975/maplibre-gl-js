@@ -14,6 +14,9 @@ import {toEvaluationFeature} from '../evaluation_feature.ts';
 import {EvaluationParameters} from '../../style/evaluation_parameters.ts';
 import {subdivideVertexLine} from '../../render/subdivision.ts';
 import {clamp} from '../../util/util.ts';
+import {isColumnarBucketSupported} from '@maplibre/mlt';
+import {isRowFeatureList} from './columnar/columnar_populate.ts';
+import {populateColumnarLine} from './columnar/columnar_line.ts';
 
 import type {CanonicalTileID} from '../../tile/tile_id.ts';
 import type {
@@ -37,6 +40,7 @@ import type {ImagePosition} from '../../render/image_atlas.ts';
 import type {SubdivisionGranularitySetting} from '../../render/subdivision_granularity_settings.ts';
 import type {DashEntry} from '../../render/line_atlas.ts';
 import type {VectorTileFeatureLike, VectorTileLayerLike} from '@maplibre/vt-pbf';
+import type {MLTVectorTileLayer} from '../../source/vector_tile_mlt.ts';
 
 // NOTE ON EXTRUDE SCALE:
 // scale the extrusion vector so that the normal length is this value.
@@ -125,6 +129,15 @@ export class LineBucket implements Bucket {
     stateDependentLayerIds: string[];
     patternFeatures: BucketFeature[];
     lineClipsArray: LineClips[];
+    isColumnar: boolean;
+    /** The position of the bucket's source layer in the tile, which a feature read from an MLT layer's columns is indexed under. */
+    sourceLayerIndex: number;
+    /**
+     * Whether the features being written can carry the clips geojson-vt gives a line it cut. Asking a
+     * feature of an MLT layer for a column it does not have is a column lookup each time, so a table
+     * without the clip columns is asked once, by {@link populateColumnarLine}, instead of once per feature.
+     */
+    hasLineClipColumns: boolean;
 
     layoutVertexArray: LineLayoutArray;
     layoutVertexBuffer: VertexBuffer;
@@ -148,6 +161,9 @@ export class LineBucket implements Bucket {
         this.hasDependencies = false;
         this.patternFeatures = [];
         this.lineClipsArray = [];
+        this.isColumnar = isColumnarBucketSupported(options.encoding, this.layers[0].filter, options.zoom, this.layers[0].id);
+        this.sourceLayerIndex = options.sourceLayerIndex;
+        this.hasLineClipColumns = true;
         this.gradients = {};
         for (const layer of this.layers) {
             this.gradients[layer.id] = {};
@@ -163,7 +179,12 @@ export class LineBucket implements Bucket {
         this.stateDependentLayerIds = this.layers.filter((l) => l.isStateDependent()).map((l) => l.id);
     }
 
-    populate(features: IndexedFeature[], options: PopulateParameters, canonical: CanonicalTileID): void {
+    populate(features: IndexedFeature[] | MLTVectorTileLayer, options: PopulateParameters, canonical: CanonicalTileID): void {
+        if (!isRowFeatureList(features)) {
+            populateColumnarLine(this, features, options, canonical);
+            return;
+        }
+
         const lineSortKey = this.layers[0].layout.get('line-sort-key');
         const sortFeaturesByKey = !lineSortKey.isConstant();
         const bucketFeatures: BucketFeature[] = [];
@@ -202,7 +223,7 @@ export class LineBucket implements Bucket {
      * `queryRenderedFeatures`. A feature that needs a pattern or a data-driven dash is kept in
      * `patternFeatures` and written by `addFeatures()` once the atlases hold them.
      */
-    protected addBucketFeatures(
+    addBucketFeatures(
         bucketFeatures: BucketFeature[],
         featureAt: (index: number) => VectorTileFeatureLike,
         options: PopulateParameters,
@@ -277,6 +298,7 @@ export class LineBucket implements Bucket {
     }
 
     lineFeatureClips(feature: BucketFeature): LineClips | undefined {
+        if (!this.hasLineClipColumns) return;
         if (!!feature.properties && Object.hasOwn(feature.properties, GEOJSONVT_CLIP_START) && Object.hasOwn(feature.properties, GEOJSONVT_CLIP_END)) {
             const start = +feature.properties[GEOJSONVT_CLIP_START];
             const end = +feature.properties[GEOJSONVT_CLIP_END];
@@ -704,4 +726,4 @@ export class LineBucket implements Bucket {
     }
 }
 
-register('LineBucket', LineBucket, {omit: ['layers', 'patternFeatures']});
+register('LineBucket', LineBucket, {omit: ['layers', 'patternFeatures', 'isColumnar', 'sourceLayerIndex', 'hasLineClipColumns']});
