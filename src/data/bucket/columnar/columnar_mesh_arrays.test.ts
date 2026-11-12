@@ -1,18 +1,67 @@
 import {describe, test, expect} from 'vitest';
-import {readFileSync} from 'fs';
-import path from 'path';
-import {decodeTile, GpuVector, type FeatureTable} from '@maplibre/mlt';
 import {FillLayoutArray, LineIndexArray, TriangleIndexArray} from '../../array_types.g.ts';
 import {SegmentVector} from '../../segment.ts';
 import {fillLargeMeshArrays} from '../../../render/fill_large_mesh_arrays.ts';
 import {EXTENT} from '../../extent.ts';
 import {buildTessellatedFillMesh, writeTessellatedFill, type FillMeshTarget} from './columnar_mesh_arrays.ts';
+import {preTessellatedTables} from '../../../util/test/mlt.ts';
+
+import type {GpuVector} from '@maplibre/mlt';
+
+type Position = [number, number];
+
+function createTarget(): FillMeshTarget {
+    return {
+        layoutVertexArray: new FillLayoutArray(),
+        indexArray: new TriangleIndexArray(),
+        indexArray2: new LineIndexArray(),
+        segments: new SegmentVector(),
+        segments2: new SegmentVector()
+    };
+}
+
+/** The triangles a target holds, as vertex positions in the order they are drawn. */
+function trianglesOf(target: FillMeshTarget): Position[][] {
+    const {uint16} = target.indexArray;
+    return Array.from({length: target.indexArray.length}, (_, i) => [0, 1, 2].map(corner => positionOf(target, uint16[i * 3 + corner])));
+}
+
+/** The outline edges a target holds, as pairs of vertex positions. */
+function edgesOf(target: FillMeshTarget): Position[][] {
+    const {uint16} = target.indexArray2;
+    return Array.from({length: target.indexArray2.length}, (_, i) => [positionOf(target, uint16[i * 2]), positionOf(target, uint16[i * 2 + 1])]);
+}
+
+/** The position of vertex `vertex` of a target. */
+function positionOf(target: FillMeshTarget, vertex: number): Position {
+    const {int16} = target.layoutVertexArray;
+    return [int16[vertex * 2], int16[vertex * 2 + 1]];
+}
+
+/**
+ * A feature that is one ring of `numVertices` vertices, covered by a triangle fan. The vertices lie on
+ * a grid, so that every one has a position of its own.
+ */
+function ringOfVertices(numVertices: number): GpuVector {
+    const vertexBuffer = new Int32Array(numVertices * 2);
+    for (let i = 0; i < numVertices; i++) {
+        vertexBuffer[i * 2] = i % 300;
+        vertexBuffer[i * 2 + 1] = Math.floor(i / 300);
+    }
+    const indexBuffer = new Uint32Array((numVertices - 2) * 3);
+    for (let i = 0; i < numVertices - 2; i++) indexBuffer.set([0, i + 1, i + 2], i * 3);
+
+    return {
+        triangleOffsets: new Uint32Array([0, numVertices - 2]),
+        indexBuffer,
+        vertexBuffer,
+        topologyVector: {ringOffsets: new Uint32Array([0, numVertices])}
+    } as unknown as GpuVector;
+}
 
 describe('buildTessellatedFillMesh', () => {
     test('draws every feature\'s triangles from that feature\'s own vertices', () => {
-        const file = path.join(__dirname, '../../../../test/integration/assets/tiles/mlt/5/22/12.mlt');
-        const tables = decodeTile(new Uint8Array(readFileSync(file)));
-        const tessellated = tables.filter(table => table.geometryVector instanceof GpuVector);
+        const tessellated = preTessellatedTables();
         expect(tessellated.length).toBeGreaterThan(0);
 
         for (const table of tessellated) {
@@ -30,13 +79,8 @@ describe('buildTessellatedFillMesh', () => {
 });
 
 describe('writeTessellatedFill', () => {
-    const tile = path.join(__dirname, '../../../../test/integration/assets/tiles/mlt/5/22/12.mlt');
-    function tessellatedTables(): FeatureTable[] {
-        return decodeTile(new Uint8Array(readFileSync(tile))).filter(table => table.geometryVector instanceof GpuVector);
-    }
-
     test('draws the triangles and the outline of the mesh builder, counter-clockwise', () => {
-        const tables = tessellatedTables();
+        const tables = preTessellatedTables();
         expect(tables.length).toBeGreaterThan(0);
 
         for (const table of tables) {
@@ -134,54 +178,3 @@ describe('writeTessellatedFill', () => {
         }
     });
 });
-
-type Position = [number, number];
-
-function createTarget(): FillMeshTarget {
-    return {
-        layoutVertexArray: new FillLayoutArray(),
-        indexArray: new TriangleIndexArray(),
-        indexArray2: new LineIndexArray(),
-        segments: new SegmentVector(),
-        segments2: new SegmentVector()
-    };
-}
-
-/** The triangles a target holds, as vertex positions in the order they are drawn. */
-function trianglesOf(target: FillMeshTarget): Position[][] {
-    const {uint16} = target.indexArray;
-    return Array.from({length: target.indexArray.length}, (_, i) => [0, 1, 2].map(corner => positionOf(target, uint16[i * 3 + corner])));
-}
-
-/** The outline edges a target holds, as pairs of vertex positions. */
-function edgesOf(target: FillMeshTarget): Position[][] {
-    const {uint16} = target.indexArray2;
-    return Array.from({length: target.indexArray2.length}, (_, i) => [positionOf(target, uint16[i * 2]), positionOf(target, uint16[i * 2 + 1])]);
-}
-
-/** The position of vertex `vertex` of a target. */
-function positionOf(target: FillMeshTarget, vertex: number): Position {
-    const {int16} = target.layoutVertexArray;
-    return [int16[vertex * 2], int16[vertex * 2 + 1]];
-}
-
-/**
- * A feature that is one ring of `numVertices` vertices, covered by a triangle fan. The vertices lie on
- * a grid, so that every one has a position of its own.
- */
-function ringOfVertices(numVertices: number): GpuVector {
-    const vertexBuffer = new Int32Array(numVertices * 2);
-    for (let i = 0; i < numVertices; i++) {
-        vertexBuffer[i * 2] = i % 300;
-        vertexBuffer[i * 2 + 1] = Math.floor(i / 300);
-    }
-    const indexBuffer = new Uint32Array((numVertices - 2) * 3);
-    for (let i = 0; i < numVertices - 2; i++) indexBuffer.set([0, i + 1, i + 2], i * 3);
-
-    return {
-        triangleOffsets: new Uint32Array([0, numVertices - 2]),
-        indexBuffer,
-        vertexBuffer,
-        topologyVector: {ringOffsets: new Uint32Array([0, numVertices])}
-    } as unknown as GpuVector;
-}

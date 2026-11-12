@@ -1,10 +1,9 @@
 import {describe, test, expect, vi, afterEach} from 'vitest';
-import {readFileSync} from 'fs';
-import path from 'path';
-import {decodeTile, encodeTile, GpuVector, SINGLE_PART_GEOMETRY_TYPE, type FeatureTable, type SelectionVector} from '@maplibre/mlt';
+import {decodeTile, encodeTile, SINGLE_PART_GEOMETRY_TYPE, type FeatureTable, type SelectionVector} from '@maplibre/mlt';
 import {MLTVectorTileLayer} from '../../../source/vector_tile_mlt.ts';
 import {FeatureIndex} from '../../feature_index.ts';
 import {OverscaledTileID} from '../../../tile/tile_id.ts';
+import {preTessellatedTables} from '../../../util/test/mlt.ts';
 import {
     columnarTransferOmitList,
     isRowFeatureList,
@@ -73,8 +72,7 @@ describe('selectColumnarFeatures', () => {
     });
 
     test('selects every polygon of a pre-tessellated layer without asking its geometry vector', () => {
-        const file = path.join(__dirname, '../../../../test/integration/assets/tiles/mlt/5/22/12.mlt');
-        const table = decodeTile(new Uint8Array(readFileSync(file))).find(t => t.geometryVector instanceof GpuVector);
+        const [table] = preTessellatedTables();
         const filter = vi.spyOn(table.geometryVector, 'filter');
 
         const selection = selectColumnarFeatures(table, undefined, 5, [SINGLE_PART_GEOMETRY_TYPE.POLYGON]);

@@ -3,7 +3,7 @@ import {readFileSync} from 'fs';
 import path from 'path';
 import {classifyRings} from '@maplibre/maplibre-gl-style-spec';
 import {GEOMETRY_TYPE, FeatureTable, decodeTile, encodeTile} from '@maplibre/mlt';
-import {createTriangleOnlyGpuVector} from '../util/test/mlt.ts';
+import {createTriangleOnlyGpuVector, triangleOnlyLayer} from '../util/test/mlt.ts';
 import {MLTVectorTile, MLTVectorTileLayer, hasRingTopology, isMLTVectorTileLayer, tessellatedVertexBase} from './vector_tile_mlt';
 
 function encode(): ArrayBuffer {
@@ -178,17 +178,6 @@ describe('MLTVectorTile on real tiles', () => {
 });
 
 describe('MLTVectorTileLayer on a pre-tessellated layer', () => {
-    /** Two polygons, a square and a triangle, stored as triangles only: no ring topology. */
-    function triangleOnlyLayer() {
-        const geometryVector = createTriangleOnlyGpuVector(
-            new Uint32Array([GEOMETRY_TYPE.POLYGON, GEOMETRY_TYPE.POLYGON]),
-            new Uint32Array([0, 2, 3]),
-            new Uint32Array([0, 1, 2, 0, 2, 3, 0, 1, 2]),
-            new Int32Array([0, 0, 100, 0, 100, 100, 0, 100, 200, 0, 300, 0, 250, 100])
-        );
-        return new MLTVectorTileLayer(new FeatureTable('land', geometryVector, undefined, [], 4096, 2));
-    }
-
     test('knows that a layer of triangles has no ring topology', () => {
         const layer = triangleOnlyLayer();
 
