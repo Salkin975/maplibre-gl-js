@@ -33,6 +33,14 @@ function decodeMixedLayer(): FeatureTable {
     return decodeTile(encodeMixedLayer())[0];
 }
 
+function indices(selection: SelectionVector): number[] {
+    return Array.from({length: selection.limit}, (_, i) => selection.getIndex(i));
+}
+
+function createFeatureIndex(promoteId?: PromoteIdSpecification): FeatureIndex {
+    return new FeatureIndex(new OverscaledTileID(0, 0, 0, 0, 0), promoteId);
+}
+
 const classIsA: FilterSpecification = ['==', 'class', 'a'];
 
 describe('isRowFeatureList', () => {
@@ -176,11 +184,3 @@ describe('columnarTransferOmitList', () => {
             .toEqual(['layers', 'patternFeatures', 'isColumnar', 'sourceLayerIndex']);
     });
 });
-
-function indices(selection: SelectionVector): number[] {
-    return Array.from({length: selection.limit}, (_, i) => selection.getIndex(i));
-}
-
-function createFeatureIndex(promoteId?: PromoteIdSpecification): FeatureIndex {
-    return new FeatureIndex(new OverscaledTileID(0, 0, 0, 0, 0), promoteId);
-}
