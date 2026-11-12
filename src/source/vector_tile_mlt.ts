@@ -1,5 +1,5 @@
 import Point from '@mapbox/point-geometry';
-import {type FeatureTable, type LayerBlock, createRowView, decodeTile, GEOMETRY_TYPE, GpuVector, scanLayerBlocks, toMvtValue} from '@maplibre/mlt';
+import {type FeatureTable, type LayerBlock, createRowView, decodeTile, GEOMETRY_TYPE, GpuVector, scanLayerBlocks} from '@maplibre/mlt';
 
 import type {VectorTileFeatureLike, VectorTileLayerLike, VectorTileLike} from '@maplibre/vt-pbf';
 
@@ -32,6 +32,15 @@ function defineLazyLayer(layers: Record<string, VectorTileLayerLike>, layerBlock
 }
 
 /**
+ * Reads a feature id the way `@mapbox/vector-tile` reports it: a 64-bit id becomes a JS number,
+ * rounded when it is outside the safe-integer range, and a missing id is `undefined`.
+ */
+function toMvtId(id: number | bigint | null | undefined): number | undefined {
+    if (typeof id === 'bigint') return Number(id);
+    return id ?? undefined;
+}
+
+/**
  * A feature of an {@link MLTVectorTileLayer}, backed by the layer's columns and read from them
  * only when asked.
  */
@@ -55,7 +64,7 @@ class MLTVectorTileFeature implements VectorTileFeatureLike {
         const rowView = createRowView(featureTable, index) as VectorTileFeatureLike['properties'];
         this.properties = layer.copyProperties ? {...rowView} : rowView;
         this.type = toVectorTileGeometryType(featureTable.geometryVector?.geometryType(index));
-        this.id = toMvtValue(featureTable.idVector?.getValue(index)) as number | undefined;
+        this.id = toMvtId(featureTable.idVector?.getValue(index));
     }
 
     /** Returns copies of the decoded points, because bucket code is free to modify them. */
