@@ -26,6 +26,40 @@ function encode(): ArrayBuffer {
     return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
 
+function readAll(layer: MLTVectorTileLayer) {
+    const rows = [];
+    for (let i = 0; i < layer.length; i++) {
+        const feature = layer.feature(i);
+        rows.push({id: feature.id, type: feature.type, geometry: feature.loadGeometry(), properties: {...feature.properties}});
+    }
+    return rows;
+}
+
+/** Expects every layer of a tile from the integration assets to read as `decodeTile()` decodes it eagerly. */
+function expectEagerlyDecodedFeatures(file: string) {
+    const buffer = readFileSync(path.join(__dirname, '../../test/integration/assets/tiles', file)).buffer.slice(0);
+    const expected = decodeTile(new Uint8Array(buffer.slice(0)));
+    const tile = new MLTVectorTile(buffer);
+
+    expect(Object.keys(tile.layers).sort()).toEqual(expected.map(table => table.name).sort());
+
+    for (const table of expected) {
+        const layer = tile.layers[table.name];
+        const features = table.getFeatures();
+        expect(layer).toHaveLength(features.length);
+        expect(layer.extent).toBe(table.extent);
+
+        for (let i = 0; i < features.length; i++) {
+            const feature = layer.feature(i);
+            const expectedGeometry = features[i].geometry.coordinates.map(ring => ring.map(({x, y}) => ({x, y})));
+
+            expect(feature.loadGeometry()).toMatchObject(expectedGeometry);
+            expect(feature.id).toBe(features[i].id === undefined ? undefined : Number(features[i].id));
+            expect({...feature.properties}).toEqual(features[i].properties);
+        }
+    }
+}
+
 describe('MLTVectorTile', () => {
     afterEach(() => {
         vi.restoreAllMocks();
@@ -128,38 +162,15 @@ describe('MLTVectorTile.releaseDecodedColumns', () => {
 });
 
 describe('MLTVectorTile on real tiles', () => {
-    const tiles = ['mlt/5/22/12.mlt', 'mlt/14/8716/5685.mlt', 'mlt/5/17/10.mlt'];
+    test('matches the eagerly decoded features of a tile whose polygon layers store their one geometry type once', () => {
+        expectEagerlyDecodedFeatures('mlt/5/22/12.mlt');
+    });
 
-    test.each(tiles)('matches the eagerly decoded features of %s', (file) => {
-        const buffer = readFileSync(path.join(__dirname, '../../test/integration/assets/tiles', file)).buffer.slice(0);
-        const expected = decodeTile(new Uint8Array(buffer.slice(0)));
-        const tile = new MLTVectorTile(buffer);
+    test('matches the eagerly decoded features of a street-level tile with a pre-tessellated layer of lines and polygons', () => {
+        expectEagerlyDecodedFeatures('mlt/14/8716/5685.mlt');
+    });
 
-        expect(Object.keys(tile.layers).sort()).toEqual(expected.map(table => table.name).sort());
-
-        for (const table of expected) {
-            const layer = tile.layers[table.name];
-            const features = table.getFeatures();
-            expect(layer).toHaveLength(features.length);
-            expect(layer.extent).toBe(table.extent);
-
-            for (let i = 0; i < features.length; i++) {
-                const feature = layer.feature(i);
-                const expectedGeometry = features[i].geometry.coordinates.map(ring => ring.map(({x, y}) => ({x, y})));
-
-                expect(feature.loadGeometry()).toMatchObject(expectedGeometry);
-                expect(feature.id).toBe(features[i].id === undefined ? undefined : Number(features[i].id));
-                expect({...feature.properties}).toEqual(features[i].properties);
-            }
-        }
+    test('matches the eagerly decoded features of a tile whose line layer stores its one geometry type once', () => {
+        expectEagerlyDecodedFeatures('mlt/5/17/10.mlt');
     });
 });
-
-function readAll(layer: MLTVectorTileLayer) {
-    const rows = [];
-    for (let i = 0; i < layer.length; i++) {
-        const feature = layer.feature(i);
-        rows.push({id: feature.id, type: feature.type, geometry: feature.loadGeometry(), properties: {...feature.properties}});
-    }
-    return rows;
-}
