@@ -2,7 +2,8 @@ import {describe, test, expect, vi, afterEach} from 'vitest';
 import {readFileSync} from 'fs';
 import path from 'path';
 import {classifyRings} from '@maplibre/maplibre-gl-style-spec';
-import {GEOMETRY_TYPE, FeatureTable, createFlatGpuVector, decodeTile, encodeTile} from '@maplibre/mlt';
+import {GEOMETRY_TYPE, FeatureTable, decodeTile, encodeTile} from '@maplibre/mlt';
+import {createTriangleOnlyGpuVector} from '../util/test/mlt.ts';
 import {MLTVectorTile, MLTVectorTileLayer, hasRingTopology, isMLTVectorTileLayer, tessellatedVertexBase} from './vector_tile_mlt';
 
 function encode(): ArrayBuffer {
@@ -179,7 +180,7 @@ describe('MLTVectorTile on real tiles', () => {
 describe('MLTVectorTileLayer on a pre-tessellated layer', () => {
     /** Two polygons, a square and a triangle, stored as triangles only: no ring topology. */
     function triangleOnlyLayer() {
-        const geometryVector = createFlatGpuVector(
+        const geometryVector = createTriangleOnlyGpuVector(
             new Uint32Array([GEOMETRY_TYPE.POLYGON, GEOMETRY_TYPE.POLYGON]),
             new Uint32Array([0, 2, 3]),
             new Uint32Array([0, 1, 2, 0, 2, 3, 0, 1, 2]),
@@ -208,7 +209,7 @@ describe('MLTVectorTileLayer on a pre-tessellated layer', () => {
     });
 
     test('winds every triangle as an exterior ring, so that each one stays a polygon of its own', () => {
-        const square = createFlatGpuVector(
+        const square = createTriangleOnlyGpuVector(
             new Uint32Array([GEOMETRY_TYPE.POLYGON]),
             new Uint32Array([0, 2]),
             // The second triangle winds against the first.

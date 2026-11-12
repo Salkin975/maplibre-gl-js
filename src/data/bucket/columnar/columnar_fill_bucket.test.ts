@@ -1,5 +1,5 @@
 import {describe, test, expect, vi, afterEach} from 'vitest';
-import {encodeTile, decodeTile, createFlatGpuVector, FeatureTable, GEOMETRY_TYPE, GpuVector} from '@maplibre/mlt';
+import {encodeTile, decodeTile, FeatureTable, GEOMETRY_TYPE, GpuVector} from '@maplibre/mlt';
 import {readFileSync} from 'fs';
 import path from 'path';
 import {FillStyleLayer} from '../../../style/style_layer/fill_style_layer.ts';
@@ -11,6 +11,7 @@ import {MLTVectorTileLayer} from '../../../source/vector_tile_mlt.ts';
 import {FeatureIndex} from '../../feature_index.ts';
 import {OverscaledTileID} from '../../../tile/tile_id.ts';
 import {SubdivisionGranularityExpression, SubdivisionGranularitySetting} from '../../../render/subdivision_granularity_settings.ts';
+import {createTriangleOnlyGpuVector} from '../../../util/test/mlt.ts';
 
 import type Point from '@mapbox/point-geometry';
 import type {FilterSpecification} from '@maplibre/maplibre-gl-style-spec';
@@ -23,7 +24,7 @@ import type {CanonicalTileID} from '../../../tile/tile_id.ts';
  * vertices) and a triangle. No ring topology, so there is no outline and no per-feature vertex count.
  */
 function triangleOnlyLayer(): MLTVectorTileLayer {
-    const geometryVector = createFlatGpuVector(
+    const geometryVector = createTriangleOnlyGpuVector(
         new Uint32Array([GEOMETRY_TYPE.POLYGON, GEOMETRY_TYPE.POLYGON]),
         new Uint32Array([0, 2, 3]),
         new Uint32Array([0, 1, 2, 0, 2, 3, 0, 1, 2]),
