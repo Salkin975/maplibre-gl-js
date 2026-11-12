@@ -7,13 +7,16 @@ import {ColumnarFillBucket} from '../../data/bucket/columnar/columnar_fill_bucke
 import {LineStyleLayer} from '../../style/style_layer/line_style_layer.ts';
 import {LineBucket} from '../../data/bucket/line_bucket.ts';
 import {ColumnarLineBucket} from '../../data/bucket/columnar/columnar_line_bucket.ts';
+import {SymbolStyleLayer} from '../../style/style_layer/symbol_style_layer.ts';
+import {SymbolBucket, type SymbolFeature} from '../../data/bucket/symbol_bucket.ts';
+import {ColumnarSymbolBucket} from '../../data/bucket/columnar/columnar_symbol_bucket.ts';
 import {MLTVectorTileLayer} from '../../source/vector_tile_mlt.ts';
 import {FeatureIndex} from '../../data/feature_index.ts';
 import {OverscaledTileID} from '../../tile/tile_id.ts';
 import {SubdivisionGranularitySetting} from '../../render/subdivision_granularity_settings.ts';
 
 import type {FeatureTable} from '@maplibre/mlt';
-import type {FilterSpecification} from '@maplibre/maplibre-gl-style-spec';
+import type {FilterSpecification, Formatted} from '@maplibre/maplibre-gl-style-spec';
 import type {TypedStyleLayer} from '../../style/style_layer/typed_style_layer.ts';
 import type {StructArray} from '../struct_array.ts';
 import type {Bucket, BucketParameters, IndexedFeature, PopulateParameters} from '../../data/bucket.ts';
@@ -144,6 +147,40 @@ export const LINE_BUCKETS: BucketPair<LineStyleLayer, LineBucket, LineArrays> = 
     RowBucket: LineBucket,
     ColumnarBucket: ColumnarLineBucket,
     summarize: lineArrays
+};
+
+/** What a symbol bucket selected and resolved, and what it asked the main thread for. */
+export type SymbolSummary = {
+    features: Array<Omit<SymbolFeature, 'text' | 'icon'> & {text?: string; icon?: string}>;
+    icons: PopulateParameters['iconDependencies'];
+    glyphs: PopulateParameters['glyphDependencies'];
+};
+
+/** Returns a symbol layer on the source layer `places` that labels with `name` and draws the icon `icon`, evaluated at {@link ZOOM}. */
+export function createSymbolLayer(filter?: FilterSpecification, layout: Record<string, unknown> = {}): SymbolStyleLayer {
+    const layer = new SymbolStyleLayer({
+        id: 'symbol', type: 'symbol', source: 's', 'source-layer': 'places', filter,
+        layout: {'text-field': ['get', 'name'], 'text-font': ['Test'], 'icon-image': ['get', 'icon'], ...layout}
+    } as any, {});
+    layer.recalculate(new EvaluationParameters(ZOOM), []);
+    return layer;
+}
+
+/** Returns what a symbol bucket selected and resolved, and what it asked for in `options`. */
+export function symbolSummary(bucket: SymbolBucket, options: PopulateParameters): SymbolSummary {
+    return {
+        features: bucket.features.map(f => ({...f, text: (f.text as Formatted | undefined)?.toString(), icon: f.icon?.name})),
+        icons: options.iconDependencies,
+        glyphs: options.glyphDependencies
+    };
+}
+
+/** `SymbolBucket` and `ColumnarSymbolBucket`, compared by what they select and request. */
+export const SYMBOL_BUCKETS: BucketPair<SymbolStyleLayer, SymbolBucket, SymbolSummary> = {
+    createLayer: createSymbolLayer,
+    RowBucket: SymbolBucket,
+    ColumnarBucket: ColumnarSymbolBucket,
+    summarize: symbolSummary
 };
 
 /**
