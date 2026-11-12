@@ -4,6 +4,9 @@ import {EvaluationParameters} from '../../style/evaluation_parameters.ts';
 import {CollisionBoxArray} from '../../data/array_types.g.ts';
 import {FillBucket} from '../../data/bucket/fill_bucket.ts';
 import {ColumnarFillBucket} from '../../data/bucket/columnar/columnar_fill_bucket.ts';
+import {LineStyleLayer} from '../../style/style_layer/line_style_layer.ts';
+import {LineBucket} from '../../data/bucket/line_bucket.ts';
+import {ColumnarLineBucket} from '../../data/bucket/columnar/columnar_line_bucket.ts';
 import {MLTVectorTileLayer} from '../../source/vector_tile_mlt.ts';
 import {FeatureIndex} from '../../data/feature_index.ts';
 import {OverscaledTileID} from '../../tile/tile_id.ts';
@@ -108,6 +111,39 @@ export const FILL_BUCKETS: BucketPair<FillStyleLayer, FillBucket, FillArrays> = 
     RowBucket: FillBucket,
     ColumnarBucket: ColumnarFillBucket,
     summarize: fillArrays
+};
+
+/** The arrays a line bucket writes, byte for byte, and its segments. */
+export type LineArrays = {
+    vertices: number[];
+    triangles: number[];
+    segments: Segment[];
+};
+
+/** Returns a line layer on the source layer `roads`, evaluated at {@link ZOOM}. */
+export function createLineLayer(filter?: FilterSpecification, layout: Record<string, unknown> = {}): LineStyleLayer {
+    const layer = new LineStyleLayer({
+        id: 'line', type: 'line', source: 's', 'source-layer': 'roads', filter, layout, paint: {'line-color': 'red'}
+    } as any, {});
+    layer.recalculate(new EvaluationParameters(ZOOM), []);
+    return layer;
+}
+
+/** Returns what a line bucket wrote. */
+export function lineArrays(bucket: LineBucket): LineArrays {
+    return {
+        vertices: bytes(bucket.layoutVertexArray),
+        triangles: bytes(bucket.indexArray),
+        segments: bucket.segments.get().map(s => ({...s}))
+    };
+}
+
+/** `LineBucket` and `ColumnarLineBucket`, compared by the arrays they write. */
+export const LINE_BUCKETS: BucketPair<LineStyleLayer, LineBucket, LineArrays> = {
+    createLayer: createLineLayer,
+    RowBucket: LineBucket,
+    ColumnarBucket: ColumnarLineBucket,
+    summarize: lineArrays
 };
 
 /**
