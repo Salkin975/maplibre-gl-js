@@ -8,7 +8,6 @@ import {StyleLayerIndex} from '../style/style_layer_index.ts';
 import {SubdivisionGranularitySetting} from '../render/subdivision_granularity_settings.ts';
 
 import type {Bucket} from '../data/bucket.ts';
-import type {BucketParameters} from '../data/bucket.ts';
 import type {StyleLayer} from '../style/style_layer.ts';
 import type {WorkerTileParameters} from './worker_source.ts';
 
@@ -70,16 +69,9 @@ function fakeBucket(isColumnar: boolean, hasDependencies = false): FakeBucket {
     } as unknown as FakeBucket;
 }
 
-/** Replaces `createBucket` of every family with one that returns `buckets[i]` and records its parameters. */
+/** Makes `createBucket` of the i-th family return `buckets[i]`, and returns the mock of each family's `createBucket`. */
 function serveBuckets(layerIndex: StyleLayerIndex, buckets: FakeBucket[]) {
-    const parameters: Array<BucketParameters<any>> = [];
-    for (const [i, family] of families(layerIndex).entries()) {
-        family[0].createBucket = (p: BucketParameters<any>) => {
-            parameters.push(p);
-            return buckets[i];
-        };
-    }
-    return parameters;
+    return families(layerIndex).map((family, i) => vi.spyOn(family[0], 'createBucket').mockReturnValue(buckets[i]));
 }
 
 function parse(tile: WorkerTile, data: MLTVectorTile | GeoJSONWrapper, layerIndex: StyleLayerIndex) {
@@ -141,22 +133,22 @@ describe('WorkerTile dispatch', () => {
 describe('WorkerTile encoding of the parsed layer', () => {
     test('says mlt for a layer that has a feature table', async () => {
         const layerIndex = createLayerIndex(['a']);
-        const parameters = serveBuckets(layerIndex, [fakeBucket(true)]);
+        const [createBucket] = serveBuckets(layerIndex, [fakeBucket(true)]);
 
         await parse(createWorkerTile(), createMltTile(), layerIndex);
 
-        expect(parameters[0].encoding).toBe('mlt');
+        expect(createBucket).toHaveBeenCalledWith(expect.objectContaining({encoding: 'mlt'}));
     });
 
     test('says mvt for a layer of a re-encoded tile although the request was for mlt', async () => {
         // The overzoom case: the WorkerTile was created for 'mlt', but the data is row-based.
         const layerIndex = createLayerIndex(['a'], '_geojsonTileLayer');
         const bucket = fakeBucket(true);
-        const parameters = serveBuckets(layerIndex, [bucket]);
+        const [createBucket] = serveBuckets(layerIndex, [bucket]);
 
         await parse(createWorkerTile(), createRowTile(), layerIndex);
 
-        expect(parameters[0].encoding).toBe('mvt');
+        expect(createBucket).toHaveBeenCalledWith(expect.objectContaining({encoding: 'mvt'}));
         // Whatever the bucket claims, without a feature table it can only be given rows.
         expect(Array.isArray(bucket.populate.mock.calls[0][0])).toBe(true);
     });
