@@ -7,7 +7,7 @@ import {GlyphAtlas} from '../render/glyph_atlas.ts';
 import {EvaluationParameters} from '../style/evaluation_parameters.ts';
 import {OverscaledTileID} from '../tile/tile_id.ts';
 import {type GetDashesResponse, MessageType, type GetImagesResponse} from '../util/actor_messages.ts';
-import {isMLTVectorTileLayer, MLTVectorTile, type MLTVectorTileLayer} from './vector_tile_mlt.ts';
+import {hasRingTopology, isMLTVectorTileLayer, isPreTessellated, MLTVectorTile, type MLTVectorTileLayer} from './vector_tile_mlt.ts';
 
 import type {Bucket, IndexedFeature, PopulateParameters} from '../data/bucket.ts';
 import type {IActor} from '../util/actor.ts';
@@ -66,7 +66,8 @@ export class WorkerTile {
      * and dashes the buckets depend on.
      *
      * A columnar bucket is given the MLT layer whose columns it reads, and every other bucket a row
-     * list, also for an MLT layer, see {@link Bucket.isColumnar}. Once the buckets are complete, an MLT
+     * list, also for an MLT layer, see {@link Bucket.isColumnar}. A layer that only a columnar bucket can
+     * draw gets no other bucket, see {@link holdsTrianglesOnly}. Once the buckets are complete, an MLT
      * tile's decoded columns are released: the tile stays in the worker for `reloadTile()`, which
      * decodes again what it reads.
      */
@@ -114,6 +115,7 @@ export class WorkerTile {
                 }
             }
             let mltRows: IndexedFeature[] | undefined;
+            const trianglesOnly = holdsTrianglesOnly(mltLayer);
 
             for (const family of layerFamilies[sourceLayerId]) {
                 const layer = family[0];
@@ -124,7 +126,7 @@ export class WorkerTile {
                 if (layer.isHidden(this.zoom, true)) continue;
                 recalculateLayers(family, this.zoom, availableImages);
 
-                const bucket = buckets[layer.id] = layer.createBucket({
+                const bucket = layer.createBucket({
                     encoding: mltLayer ? 'mlt' : 'mvt',
                     index: featureIndex.bucketLayerIDs.length,
                     layers: family,
@@ -135,6 +137,11 @@ export class WorkerTile {
                     sourceLayerIndex,
                     sourceID: this.source
                 });
+                if (trianglesOnly && !bucket.isColumnar) {
+                    warnOnce(`Layer "${layer.id}" reads a pre-tessellated source layer that stores only triangles and cannot be drawn from its columns, so the layer is skipped.`);
+                    continue;
+                }
+                buckets[layer.id] = bucket;
 
                 let populateFeatures: IndexedFeature[] | MLTVectorTileLayer = features;
                 if (mltLayer) {
@@ -224,6 +231,22 @@ export class WorkerTile {
             glyphPositions: this.returnDependencies ? glyphAtlas.positions : null
         };
     }
+}
+
+/**
+ * Tells whether `mltLayer` is pre-tessellated and stores its triangles without rings, so that only a
+ * columnar bucket can draw it.
+ *
+ * The row view of such a layer has no rings to give, only the tile's triangles, each as a ring of its
+ * own: a line layer drawn from the rows outlines every triangle, and a fill layer every triangle's
+ * edges. `parse()` therefore skips, with one warning per layer, every style layer over it whose bucket
+ * is not columnar: a fill, line or symbol layer whose filter cannot be planned over the columns, and
+ * every circle, heatmap and fill-extrusion layer. A line layer over it is skipped on the columnar path
+ * as well, since the triangles hold no line to draw, see `populateColumnarLine()`.
+ */
+function holdsTrianglesOnly(mltLayer: MLTVectorTileLayer | undefined): boolean {
+    const geometryVector = mltLayer?.featureTable.geometryVector ?? null;
+    return isPreTessellated(geometryVector) && !hasRingTopology(geometryVector);
 }
 
 function recalculateLayers(layers: readonly StyleLayer[], zoom: number, availableImages: string[]) {

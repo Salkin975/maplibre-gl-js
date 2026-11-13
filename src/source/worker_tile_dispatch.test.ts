@@ -1,15 +1,21 @@
-import {describe, test, expect, vi} from 'vitest';
+import {describe, test, expect, vi, afterEach} from 'vitest';
 import {encodeTile} from '@maplibre/mlt';
-import {type Feature, GeoJSONWrapper} from '@maplibre/vt-pbf';
+import {type Feature, GeoJSONWrapper, type VectorTileLike} from '@maplibre/vt-pbf';
 import {WorkerTile} from './worker_tile.ts';
 import {MLTVectorTile, type MLTVectorTileLayer} from './vector_tile_mlt.ts';
 import {OverscaledTileID} from '../tile/tile_id.ts';
 import {StyleLayerIndex} from '../style/style_layer_index.ts';
 import {SubdivisionGranularitySetting} from '../render/subdivision_granularity_settings.ts';
+import {triangleOnlyLayer} from '../util/test/mlt.ts';
 
+import type {FilterSpecification} from '@maplibre/maplibre-gl-style-spec';
 import type {Bucket} from '../data/bucket.ts';
+import type {FillBucket} from '../data/bucket/fill_bucket.ts';
 import type {StyleLayer} from '../style/style_layer.ts';
-import type {WorkerTileParameters} from './worker_source.ts';
+import type {WorkerTileParameters, WorkerTileWithData} from './worker_source.ts';
+
+/** A filter that evaluates on rows but cannot be planned over the columns, and keeps every feature. */
+const UNPLANNABLE_FILTER: FilterSpecification = ['!=', ['to-string', ['get', 'class']], 'water'];
 
 function createWorkerTile(): WorkerTile {
     return new WorkerTile({
@@ -39,6 +45,11 @@ function createMltTile(): MLTVectorTile {
 /** A tile of row-based features, as an overzoomed MLT tile is after it was re-encoded to MVT. */
 function createRowTile(): GeoJSONWrapper {
     return new GeoJSONWrapper([{type: 1, geometry: [0, 0], tags: {name: 'a'}} as any as Feature], {version: 2, extent: 4096});
+}
+
+/** A tile whose `land` layer is pre-tessellated and stores only triangles, without rings. */
+function createTriangleOnlyTile(): VectorTileLike {
+    return {layers: {land: triangleOnlyLayer()}};
 }
 
 /** Circle layers in one source layer, each a family of its own (their filters differ). */
@@ -74,8 +85,8 @@ function serveBuckets(layerIndex: StyleLayerIndex, buckets: FakeBucket[]) {
     return families(layerIndex).map((family, i) => vi.spyOn(family[0], 'createBucket').mockReturnValue(buckets[i]));
 }
 
-function parse(tile: WorkerTile, data: MLTVectorTile | GeoJSONWrapper, layerIndex: StyleLayerIndex) {
-    return tile.parse(data, layerIndex, [], {} as any, SubdivisionGranularitySetting.noSubdivision);
+async function parse(tile: WorkerTile, data: VectorTileLike, layerIndex: StyleLayerIndex): Promise<WorkerTileWithData> {
+    return await tile.parse(data, layerIndex, [], {} as any, SubdivisionGranularitySetting.noSubdivision) as WorkerTileWithData;
 }
 
 describe('WorkerTile dispatch', () => {
@@ -195,5 +206,47 @@ describe('WorkerTile release of decoded columns', () => {
         const data = createRowTile();
 
         await expect(parse(createWorkerTile(), data, layerIndex)).resolves.toBeDefined();
+    });
+});
+
+describe('WorkerTile on a pre-tessellated layer without rings', () => {
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    test('skips a layer whose filter cannot be planned and says so once', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const layerIndex = new StyleLayerIndex([{id: 'outline', type: 'line', source: 'source', 'source-layer': 'land', filter: UNPLANNABLE_FILTER}]);
+        const tile = createWorkerTile();
+
+        const first = await parse(tile, createTriangleOnlyTile(), layerIndex);
+        const second = await parse(tile, createTriangleOnlyTile(), layerIndex);
+
+        expect(first.buckets).toHaveLength(0);
+        expect(second.buckets).toHaveLength(0);
+        expect(first.featureIndex.bucketLayerIDs).toEqual([]);
+        const skipped = warn.mock.calls.filter(([message]) => message.includes('"outline"') && message.includes('pre-tessellated'));
+        expect(skipped).toHaveLength(1);
+    });
+
+    test('draws the tile\'s triangles for a layer whose filter can be planned', async () => {
+        const layerIndex = new StyleLayerIndex([{id: 'land', type: 'fill', source: 'source', 'source-layer': 'land', filter: ['!=', 'class', 'water']}]);
+
+        const {buckets} = await parse(createWorkerTile(), createTriangleOnlyTile(), layerIndex);
+
+        expect(buckets).toHaveLength(1);
+        const bucket = buckets[0] as FillBucket;
+        expect(bucket.isColumnar).toBe(true);
+        expect(bucket.indexArray).toHaveLength(3);
+    });
+
+    test('parses a layer of an MVT tile whose filter cannot be planned as before', async () => {
+        const layerIndex = new StyleLayerIndex([{id: 'road', type: 'line', source: 'source', 'source-layer': '_geojsonTileLayer', filter: UNPLANNABLE_FILTER}]);
+        const data = new GeoJSONWrapper([{type: 2, geometry: [[[0, 0], [100, 100]]], tags: {class: 'road'}} as any as Feature], {version: 2, extent: 4096});
+
+        const {buckets} = await parse(createWorkerTile(), data, layerIndex);
+
+        expect(buckets).toHaveLength(1);
+        expect(buckets[0].isColumnar).toBe(false);
     });
 });
