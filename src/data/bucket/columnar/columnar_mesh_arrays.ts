@@ -422,55 +422,47 @@ function buildEarcutMesh({coordinates, ringStarts}: ScaledRings, polygon: number
 }
 
 /**
- * The bounding box of each ring of polygon feature `index`, as a two-point "ring" of its min and max
- * corners - what `FeatureIndex.insert()` reads from each ring, without making a point of each vertex.
- * Scaling keeps the order of coordinates, so the box is found on the tile's own coordinates.
+ * The bounding box of the vertices `[start, end)` of `vertexBuffer`, read through `vertexOffsets` when
+ * the layer stores its vertices in a dictionary, as a two-point "ring" of its min and max corners - what
+ * `FeatureIndex.insert()` reads from a ring, without making a point of each vertex. Only the two corners
+ * are scaled, since {@link scaleCoordinate} keeps the order of coordinates; no vertices give no corners.
  */
+function buildBoundingBox(vertexBuffer: Int32Array | Uint32Array, vertexOffsets: Uint32Array | undefined, start: number, end: number, scale: number): Point[] {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (let vertex = start; vertex < end; vertex++) {
+        const offset = (vertexOffsets ? vertexOffsets[vertex] : vertex) * 2;
+        const x = vertexBuffer[offset];
+        const y = vertexBuffer[offset + 1];
+        if (x < minX) minX = x;
+        if (y < minY) minY = y;
+        if (x > maxX) maxX = x;
+        if (y > maxY) maxY = y;
+    }
+    return minX > maxX ? [] : [
+        new Point(scaleCoordinate(minX, scale), scaleCoordinate(minY, scale)),
+        new Point(scaleCoordinate(maxX, scale), scaleCoordinate(maxY, scale)),
+    ];
+}
+
+/** The {@link buildBoundingBox} of each ring of polygon feature `index`. */
 export function buildRingBoundingBoxes(geometryVector: GeometryVector, index: number, scale: number): Point[][] {
     const {vertexBuffer, vertexOffsets, topologyVector} = geometryVector;
     const ringOffsets = topologyVector.ringOffsets;
     const boxes: Point[][] = [];
     const endRing = endRingOf(topologyVector, index);
     for (let ring = firstRingOf(topologyVector, index); ring < endRing; ring++) {
-        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-        for (let vertex = ringOffsets[ring]; vertex < ringOffsets[ring + 1]; vertex++) {
-            const offset = (vertexOffsets ? vertexOffsets[vertex] : vertex) * 2;
-            const x = vertexBuffer[offset];
-            const y = vertexBuffer[offset + 1];
-            if (x < minX) minX = x;
-            if (y < minY) minY = y;
-            if (x > maxX) maxX = x;
-            if (y > maxY) maxY = y;
-        }
-        boxes.push(minX > maxX ? [] : [
-            new Point(scaleCoordinate(minX, scale), scaleCoordinate(minY, scale)),
-            new Point(scaleCoordinate(maxX, scale), scaleCoordinate(maxY, scale)),
-        ]);
+        boxes.push(buildBoundingBox(vertexBuffer, vertexOffsets, ringOffsets[ring], ringOffsets[ring + 1], scale));
     }
     return boxes;
 }
 
 /**
- * A feature's bounding box as a single degenerate "ring" of its min and max corners - all
- * `FeatureIndex.insert()` needs for pre-tessellated tiles, whose rings are otherwise never decoded.
- * Only the two corners are scaled, since {@link scaleCoordinate} keeps the order of coordinates; a
- * feature without vertices has no box.
+ * The {@link buildBoundingBox} of all vertices of feature `index` of a pre-tessellated layer, as its
+ * single ring - all `FeatureIndex.insert()` needs for pre-tessellated tiles, whose rings are otherwise
+ * never decoded. A feature without vertices has no ring.
  */
 export function buildTessellatedBoundingBox(geometryVector: GpuVector, index: number, scale: number): Point[][] {
-    const {vertexBuffer} = geometryVector;
     const {vertexBase, numVertices} = locateTessellatedFeature(geometryVector, index);
-
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (let v = vertexBase * 2; v < (vertexBase + numVertices) * 2; v += 2) {
-        const x = vertexBuffer[v];
-        const y = vertexBuffer[v + 1];
-        if (x < minX) minX = x;
-        if (y < minY) minY = y;
-        if (x > maxX) maxX = x;
-        if (y > maxY) maxY = y;
-    }
-    return minX > maxX ? [] : [[
-        new Point(scaleCoordinate(minX, scale), scaleCoordinate(minY, scale)),
-        new Point(scaleCoordinate(maxX, scale), scaleCoordinate(maxY, scale)),
-    ]];
+    const box = buildBoundingBox(geometryVector.vertexBuffer, undefined, vertexBase, vertexBase + numVertices, scale);
+    return box.length ? [box] : [];
 }
