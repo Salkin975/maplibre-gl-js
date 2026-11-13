@@ -2,6 +2,7 @@ import {SymbolBucket} from '../symbol_bucket.ts';
 import {register} from '../../../util/web_worker_transfer.ts';
 import {toEvaluationFeature} from '../../evaluation_feature.ts';
 import {selectColumnarFeatures, isRowFeatureList} from './columnar_populate.ts';
+import {addPhase, phaseStart} from '../../../source/worker_timing.ts';
 
 import type {CanonicalTileID} from '../../../tile/tile_id.ts';
 import type {IndexedFeature, PopulateParameters} from '../../bucket.ts';
@@ -33,6 +34,7 @@ export class ColumnarSymbolBucket extends SymbolBucket {
         if (!hasText && !hasIcon) return;
 
         const needGeometry = this.layers[0]._featureFilter.needGeometry;
+        const selectStart = phaseStart();
         const selection = selectColumnarFeatures(sourceLayer.featureTable, this.layers[0].filter, this.zoom);
         for (let i = 0; i < selection.limit; i++) {
             const index = selection.getIndex(i);
@@ -41,6 +43,7 @@ export class ColumnarSymbolBucket extends SymbolBucket {
             const id = options.featureIndex.getId(feature, sourceLayer.name);
             this.addSymbolFeature(feature, evaluationFeature, id, index, this.sourceLayerIndex, hasText, hasIcon, options, canonical);
         }
+        addPhase('selectMaterialize', selectStart);
 
         this.finishSymbolFeatures();
     }
