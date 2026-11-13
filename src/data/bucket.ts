@@ -126,7 +126,11 @@ export interface Bucket {
     readonly layers: any[];
     readonly stateDependentLayers: any[];
     readonly stateDependentLayerIds: string[];
-    /** Whether `populate` reads a tile's columns directly, so that it must be given the `MLTVectorTileLayer` that holds them. */
+    /**
+     * Whether `populate` reads a tile's columns directly, so that it must be given the `MLTVectorTileLayer`
+     * that holds them. The bucket's constructor decides it: a bucket is columnar for an `'mlt'` layer whose
+     * filter can be planned over the columns, and any other bucket is given a row list.
+     */
     readonly isColumnar?: boolean;
     populate(features: IndexedFeature[] | MLTVectorTileLayer, options: PopulateParameters, canonical: CanonicalTileID): void;
     addFeatures(parameters: BucketDependencyParameters): void;

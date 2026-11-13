@@ -61,6 +61,15 @@ export class WorkerTile {
         this.inFlightDependencies = [];
     }
 
+    /**
+     * Builds the buckets and the feature index of the tile `data` holds, and fetches the glyphs, images
+     * and dashes the buckets depend on.
+     *
+     * A columnar bucket is given the MLT layer whose columns it reads, and every other bucket a row
+     * list, also for an MLT layer, see {@link Bucket.isColumnar}. Once the buckets are complete, an MLT
+     * tile's decoded columns are released: the tile stays in the worker for `reloadTile()`, which
+     * decodes again what it reads.
+     */
     async parse(data: VectorTileLike, layerIndex: StyleLayerIndex, availableImages: string[], actor: IActor, subdivisionGranularity: SubdivisionGranularitySetting): Promise<WorkerTileResult> {
         this.data = data;
 
@@ -125,8 +134,6 @@ export class WorkerTile {
                     sourceID: this.source
                 });
 
-                // A bucket that is not columnar must not get the table, even for an MLT layer: its filter
-                // may not be plannable, in which case createBucket() returned a row-based bucket.
                 let populateFeatures: IndexedFeature[] | MLTVectorTileLayer = features;
                 if (mltLayer) {
                     populateFeatures = bucket.isColumnar ?
@@ -200,8 +207,6 @@ export class WorkerTile {
             });
         }
 
-        // The buckets are complete and nothing reads the decoded columns any more. The tile stays in the
-        // worker for reloadTile(), which decodes again what it needs, so drop what is held in between.
         if (data instanceof MLTVectorTile) data.releaseDecodedColumns();
 
         return {
