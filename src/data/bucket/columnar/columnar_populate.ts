@@ -55,8 +55,8 @@ export function selectColumnarFeatures(
 /**
  * The features of each set of geometry types, per geometry vector, keyed by the types joined with
  * commas. Every line layer of a source layer asks for the same set, and finding it is a scan over all
- * features of the table. Keying by the geometry vector rather than the table starts over once the table
- * has released its columns and decoded them again.
+ * features of the table. A table that has released its columns decodes them into a new geometry
+ * vector, whose selections are then found anew.
  */
 const geometryTypeSelections = new WeakMap<FeatureTable['geometryVector'], Map<string, SelectionVector>>();
 

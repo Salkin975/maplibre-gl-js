@@ -133,9 +133,9 @@ export class LineBucket implements Bucket {
     /** The position of the bucket's source layer in the tile, which a feature read from an MLT layer's columns is indexed under. */
     sourceLayerIndex: number;
     /**
-     * Whether the features being written can carry the clips geojson-vt gives a line it cut. Asking a
-     * feature of an MLT layer for a column it does not have is a column lookup each time, so a table
-     * without the clip columns is asked once, by {@link populateColumnarLine}, instead of once per feature.
+     * Whether the features being written can carry the clips geojson-vt gives a line it cut. False for
+     * an MLT layer whose table has no clip columns, which {@link populateColumnarLine} finds once for the
+     * whole table.
      */
     hasLineClipColumns: boolean;
 
