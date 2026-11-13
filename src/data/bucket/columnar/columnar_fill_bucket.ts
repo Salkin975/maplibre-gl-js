@@ -5,6 +5,7 @@ import {register} from '../../../util/web_worker_transfer.ts';
 import {selectColumnarFeatures, materializeSelectedFeatures, isRowFeatureList, loadGeometryOrEmpty, columnarTransferOmitList} from './columnar_populate.ts';
 import {writeTessellatedFill, reserveTessellatedFill, buildTessellatedBoundingBox, extentScale, canWriteEarcutFill, writeEarcutFill, reserveEarcutFill, buildRingBoundingBoxes, needsSubdivision} from './columnar_mesh_arrays.ts';
 import {hasRingTopology} from '../../../source/vector_tile_mlt.ts';
+import {addPhase, phaseStart} from '../../../source/worker_timing.ts';
 
 import type Point from '@mapbox/point-geometry';
 import type {VectorTileFeatureLike} from '@maplibre/vt-pbf';
@@ -60,6 +61,7 @@ export class ColumnarFillBucket extends FillBucket {
         this.direct = isTessellated || isEarcut ? {geometryVector, scale: extentScale(featureTable.extent)} : undefined;
 
         const fillSortKey = layer.layout.get('fill-sort-key');
+        const selectStart = phaseStart();
         const selection = selectColumnarFeatures(featureTable, layer.filter, this.zoom);
         const sourceFeatures: VectorTileFeatureLike[] = [];
         const bucketFeatures = materializeSelectedFeatures(sourceLayer, selection, this.sourceLayerIndex, options.featureIndex, {
@@ -69,9 +71,12 @@ export class ColumnarFillBucket extends FillBucket {
                 ? undefined
                 : (bucketFeature) => fillSortKey.evaluate(bucketFeature, {}, canonical, options.availableImages),
         });
+        addPhase('selectMaterialize', selectStart);
 
+        const reserveStart = phaseStart();
         if (isTessellated) reserveTessellatedFill(this, geometryVector, bucketFeatures);
         else if (isEarcut) reserveEarcutFill(this, geometryVector, bucketFeatures.filter(isPolygon));
+        addPhase('write', reserveStart);
         this.addBucketFeatures(bucketFeatures, index => sourceFeatures[index], options, canonical);
         if (!this.hasDependencies) this.direct = undefined;
     }
