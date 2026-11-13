@@ -36,6 +36,7 @@ import {register} from '../../util/web_worker_transfer.ts';
 import {EvaluationParameters} from '../../style/evaluation_parameters.ts';
 import {Formatted, ResolvedImage} from '@maplibre/maplibre-gl-style-spec';
 import {getOverlapMode} from '../../style/style_layer/overlap_mode.ts';
+import {addPhase, phaseStart} from '../../source/worker_timing.ts';
 
 import type {Anchor} from '../../symbol/anchor.ts';
 import type {CanonicalTileID} from '../../tile/tile_id.ts';
@@ -479,6 +480,7 @@ export class SymbolBucket implements Bucket {
             return;
         }
 
+        const selectMaterializeStart = phaseStart();
         const globalProperties = new EvaluationParameters(this.zoom);
 
         for (const {feature, id, index, sourceLayerIndex} of features) {
@@ -491,6 +493,7 @@ export class SymbolBucket implements Bucket {
 
             this.addSymbolFeature(feature, evaluationFeature, id, index, sourceLayerIndex, hasText, hasIcon, options, canonical);
         }
+        addPhase('selectMaterialize', selectMaterializeStart);
 
         this.finishSymbolFeatures();
     }
