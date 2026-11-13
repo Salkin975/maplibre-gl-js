@@ -4,7 +4,8 @@ import {SegmentVector} from '../segment.ts';
 import {ProgramConfigurationSet} from '../program_configuration.ts';
 import {LineIndexArray, TriangleIndexArray} from '../index_array_type.ts';
 import {classifyRings} from '@maplibre/maplibre-gl-style-spec';
-const EARCUT_MAX_RINGS = 500;
+/** The most rings one polygon is triangulated with; `classifyRings()` keeps the largest. */
+export const EARCUT_MAX_RINGS = 500;
 import {register} from '../../util/web_worker_transfer.ts';
 import {hasPattern, addPatternDependencies} from './pattern_bucket_features.ts';
 import {loadGeometry} from '../load_geometry.ts';

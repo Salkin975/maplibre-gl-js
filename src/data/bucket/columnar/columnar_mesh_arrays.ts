@@ -2,6 +2,8 @@ import Point from '@mapbox/point-geometry';
 import earcut from 'earcut';
 import {clamp, warnOnce} from '../../../util/util.ts';
 import {EXTENT} from '../../extent.ts';
+import {MAX_COORDINATE, MIN_COORDINATE} from '../../load_geometry.ts';
+import {EARCUT_MAX_RINGS} from '../fill_bucket.ts';
 import {SegmentVector} from '../../segment.ts';
 import {tessellatedVertexBase, triangleCrossProduct} from '../../../source/vector_tile_mlt.ts';
 import {fixWindingOrder} from '../../../render/subdivision.ts';
@@ -45,14 +47,6 @@ type ScaledRings = {
     /** The vertex each ring begins at, followed by the number of vertices. */
     ringStarts: number[];
 };
-
-/** The number of bits a vertex coordinate is stored in, which bounds the range `loadGeometry()` clamps to. */
-const COORDINATE_BITS = 15;
-const MAX_COORDINATE = 2 ** (COORDINATE_BITS - 1) - 1;
-const MIN_COORDINATE = -MAX_COORDINATE - 1;
-
-/** The most rings one polygon is triangulated with, the limit `FillBucket` hands `classifyRings()`. */
-const EARCUT_MAX_RINGS = 500;
 
 /** The factor that carries a coordinate of a layer with the given extent into the internal `EXTENT`. */
 export function extentScale(extent: number): number {
@@ -370,9 +364,10 @@ function scaleCheckedCoordinate(value: number, scale: number): number {
 }
 
 /**
- * Groups the rings into polygons by index, as `classifyRings()` groups them: a ring that winds like the
- * first one begins a polygon and every other ring is a hole of the polygon before it. Rings without area
- * are left out unless there is only one ring, and a polygon keeps its {@link EARCUT_MAX_RINGS} largest rings.
+ * Groups the rings into polygons by index, as `classifyRings()` groups rings of points: a ring that winds
+ * like the first one begins a polygon and every other ring is a hole of the polygon before it. Rings
+ * without area are left out unless there is only one ring, and a polygon keeps its
+ * {@link EARCUT_MAX_RINGS} largest rings, the limit `FillBucket` hands `classifyRings()`.
  */
 function classifyRingRanges({coordinates, ringStarts}: ScaledRings): number[][] {
     const ringCount = ringStarts.length - 1;

@@ -9,8 +9,8 @@ import type {VectorTileFeatureLike} from '@maplibre/vt-pbf';
 // contain coordinates within [-Infinity, Infinity]. Our range is limited by the
 // number of bits used to represent the coordinate.
 const BITS = 15;
-const MAX = Math.pow(2, BITS - 1) - 1;
-const MIN = -MAX - 1;
+export const MAX_COORDINATE: number = Math.pow(2, BITS - 1) - 1;
+export const MIN_COORDINATE: number = -MAX_COORDINATE - 1;
 
 /**
  * Loads a geometry from a VectorTileFeatureLike and scales it to the common extent
@@ -27,8 +27,8 @@ export function loadGeometry(feature: VectorTileFeatureLike): Point[][] {
             const x = Math.round(point.x * scale);
             const y = Math.round(point.y * scale);
 
-            point.x = clamp(x, MIN, MAX);
-            point.y = clamp(y, MIN, MAX);
+            point.x = clamp(x, MIN_COORDINATE, MAX_COORDINATE);
+            point.y = clamp(y, MIN_COORDINATE, MAX_COORDINATE);
 
             if (x < point.x || x > point.x + 1 || y < point.y || y > point.y + 1) {
                 // warn when exceeding allowed extent except for the 1-px-off case
