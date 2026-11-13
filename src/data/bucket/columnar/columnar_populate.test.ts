@@ -191,7 +191,7 @@ describe('loadGeometryOrEmpty', () => {
         const layer = new MLTVectorTileLayer(decodeMixedLayer());
 
         // The tile's extent of 4096 is scaled to GL JS's 8192.
-        expect(loadGeometryOrEmpty(layer.feature(1), 1)).toMatchObject([[{x: 0, y: 0}, {x: 20, y: 20}]]);
+        expect(loadGeometryOrEmpty(layer.feature(1))).toMatchObject([[{x: 0, y: 0}, {x: 20, y: 20}]]);
     });
 
     test('degrades to an empty geometry and warns once instead of aborting the tile', () => {
@@ -203,8 +203,8 @@ describe('loadGeometryOrEmpty', () => {
             }
         } as unknown as VectorTileFeatureLike;
 
-        expect(loadGeometryOrEmpty(broken, 0)).toEqual([]);
-        expect(loadGeometryOrEmpty(broken, 0)).toEqual([]);
+        expect(loadGeometryOrEmpty(broken)).toEqual([]);
+        expect(loadGeometryOrEmpty(broken)).toEqual([]);
 
         expect(warn).toHaveBeenCalledTimes(1);
         expect(warn.mock.calls[0][0]).toContain('4242');

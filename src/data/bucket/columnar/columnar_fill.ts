@@ -91,7 +91,7 @@ export function isPolygon(feature: {type: VectorTileFeatureLike['type']}): boole
  * bucket writes it straight from the tile's geometry, else its rings.
  */
 function indexedGeometry(direct: DirectFillGeometry | undefined, feature: VectorTileFeatureLike, index: number): Point[][] {
-    if (!direct || !isPolygon(feature)) return loadGeometryOrEmpty(feature, index);
+    if (!direct || !isPolygon(feature)) return loadGeometryOrEmpty(feature);
 
     const {geometryVector, scale} = direct;
     return geometryVector instanceof GpuVector ?

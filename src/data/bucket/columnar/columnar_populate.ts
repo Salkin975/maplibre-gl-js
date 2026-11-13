@@ -78,7 +78,7 @@ function selectGeometryTypes(geometryVector: FeatureTable['geometryVector'], typ
 }
 
 /** Degrades to an empty geometry and warns instead of aborting the whole tile over one bad feature. */
-export function loadGeometryOrEmpty(feature: VectorTileFeatureLike, _index: number): Point[][] {
+export function loadGeometryOrEmpty(feature: VectorTileFeatureLike): Point[][] {
     try {
         return loadGeometry(feature);
     } catch (error) {
