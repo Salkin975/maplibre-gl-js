@@ -33,6 +33,11 @@ type FillMesh = {
     lineIndexLists: number[][];
 };
 
+/** Takes the outline edges {@link appendRingOutline} writes, as a `LineIndexArray` does. */
+type OutlineEdges = {
+    emplaceBack(from: number, to: number): unknown;
+};
+
 /** The rings of a polygon feature, scaled the way `loadGeometry()` scales them. */
 type ScaledRings = {
     /** Flattened vertex positions (xyxyxy…) of all rings, each ring closed by repeating its first vertex. */
@@ -52,6 +57,21 @@ const EARCUT_MAX_RINGS = 500;
 /** The factor that carries a coordinate of a layer with the given extent into the internal `EXTENT`. */
 export function extentScale(extent: number): number {
     return EXTENT / extent;
+}
+
+/**
+ * Writes an outline edge between each pair of neighbouring vertices of the ring `[start, end)` to
+ * `edges`, and one from the last vertex back to the first when `closeRing` is set, for a ring that
+ * does not repeat its first vertex at the end.
+ */
+function appendRingOutline(edges: OutlineEdges, start: number, end: number, closeRing: boolean): void {
+    for (let vertex = start + 1; vertex < end; vertex++) edges.emplaceBack(vertex - 1, vertex);
+    if (closeRing) edges.emplaceBack(end - 1, start);
+}
+
+/** Collects the edges of one ring into `line`, a ring's list in {@link FillMesh.lineIndexLists}. */
+function lineIndexList(line: number[]): OutlineEdges {
+    return {emplaceBack: (from, to) => line.push(from, to)};
 }
 
 /** Scales one coordinate and clamps it, matching `loadGeometry()`'s per-point transform. */
@@ -145,8 +165,7 @@ export function buildTessellatedFillMesh(geometryVector: GpuVector, index: numbe
         const start = topologyVector.ringOffsets[ring] - vertexBase;
         const end = topologyVector.ringOffsets[ring + 1] - vertexBase;
         const line: number[] = [];
-        for (let v = start + 1; v < end; v++) line.push(v - 1, v);
-        line.push(end - 1, start);
+        appendRingOutline(lineIndexList(line), start, end, true);
         lineIndexLists.push(line);
     }
 
@@ -226,8 +245,7 @@ export function writeTessellatedFill(target: FillMeshTarget, geometryVector: Gpu
     for (let ring = firstRing; ring < endRing; ring++) {
         const start = lineBase + ringOffsets[ring] - vertexBase;
         const end = lineBase + ringOffsets[ring + 1] - vertexBase;
-        for (let v = start + 1; v < end; v++) indexArray2.emplaceBack(v - 1, v);
-        indexArray2.emplaceBack(end - 1, start);
+        appendRingOutline(indexArray2, start, end, true);
         lineSegment.primitiveLength += end - start;
     }
 }
@@ -414,7 +432,7 @@ function buildEarcutMesh({coordinates, ringStarts}: ScaledRings, polygon: number
             for (let i = ringStarts[ring] * 2; i < ringStarts[ring + 1] * 2; i++) flattenedVertices.push(coordinates[i]);
         }
         const line: number[] = [];
-        for (let vertex = first + 1; vertex < first + count; vertex++) line.push(vertex - 1, vertex);
+        appendRingOutline(lineIndexList(line), first, first + count, false);
         lineIndexLists.push(line);
     }
     const triangleIndices = fixWindingOrder(flattenedVertices, earcut(flattenedVertices, holeIndices));
