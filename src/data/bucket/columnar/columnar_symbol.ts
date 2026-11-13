@@ -30,7 +30,7 @@ export function populateColumnarSymbol(bucket: SymbolBucket, sourceLayer: MLTVec
         const feature = sourceLayer.feature(index);
         const evaluationFeature = toEvaluationFeature(feature, needGeometry);
         const id = options.featureIndex.getId(feature, sourceLayer.name);
-        bucket.addSymbolFeature(feature, evaluationFeature, id, index, bucket.sourceLayerIndex, hasText, hasIcon, options, canonical);
+        bucket.addSymbolFeature({feature, id, index, sourceLayerIndex: bucket.sourceLayerIndex}, evaluationFeature, hasText, hasIcon, options, canonical);
     }
 
     bucket.finishSymbolFeatures();

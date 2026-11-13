@@ -59,7 +59,7 @@ import type {SymbolQuad} from '../../symbol/quads.ts';
 import type {SizeData} from '../../symbol/symbol_size.ts';
 import type {FeatureStates} from '../../source/source_state.ts';
 import type {ImagePosition} from '../../render/image_atlas.ts';
-import type {VectorTileFeatureLike, VectorTileLayerLike} from '@maplibre/vt-pbf';
+import type {VectorTileLayerLike} from '@maplibre/vt-pbf';
 import type {EvaluationFeature} from '../evaluation_feature.ts';
 import type {MLTVectorTileLayer} from '../../source/vector_tile_mlt.ts';
 
@@ -492,15 +492,15 @@ export class SymbolBucket implements Bucket {
 
         const globalProperties = new EvaluationParameters(this.zoom);
 
-        for (const {feature, id, index, sourceLayerIndex} of features) {
+        for (const indexedFeature of features) {
 
             const needGeometry = layer._featureFilter.needGeometry;
-            const evaluationFeature = toEvaluationFeature(feature, needGeometry);
+            const evaluationFeature = toEvaluationFeature(indexedFeature.feature, needGeometry);
             if (!layer._featureFilter.filter(globalProperties, evaluationFeature, canonical)) {
                 continue;
             }
 
-            this.addSymbolFeature(feature, evaluationFeature, id, index, sourceLayerIndex, hasText, hasIcon, options, canonical);
+            this.addSymbolFeature(indexedFeature, evaluationFeature, hasText, hasIcon, options, canonical);
         }
 
         this.finishSymbolFeatures();
@@ -532,23 +532,20 @@ export class SymbolBucket implements Bucket {
      * images they need in `options`, and appends the feature to `this.features`. A point label whose
      * points all lie outside the tile, and a feature that resolves to neither text nor icon, are dropped.
      *
+     * @param indexedFeature - the feature, with its id resolved for the source's `promoteId` and its position in the tile
      * @param evaluationFeature - the feature as expressions see it; its geometry is loaded here when the filter did not need it
-     * @param id - the feature's id, resolved for the source's `promoteId`
-     * @param index - the feature's position in its source layer
      * @param hasText - what {@link layoutHasText} returned for this `populate()`
      * @param hasIcon - what {@link layoutHasIcon} returned for this `populate()`
      */
     addSymbolFeature(
-        feature: VectorTileFeatureLike,
+        indexedFeature: IndexedFeature,
         evaluationFeature: EvaluationFeature,
-        id: any,
-        index: number,
-        sourceLayerIndex: number,
         hasText: boolean,
         hasIcon: boolean,
         options: PopulateParameters,
         canonical: CanonicalTileID,
     ): void {
+        const {feature, id, index, sourceLayerIndex} = indexedFeature;
         const layer = this.layers[0];
         const layout = layer.layout;
         const icons = options.iconDependencies;
