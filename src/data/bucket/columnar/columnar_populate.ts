@@ -1,4 +1,4 @@
-import {filterFeatureTable} from '@maplibre/mlt';
+import {filterFeatureTable, isColumnarBucketSupported} from '@maplibre/mlt';
 import {loadGeometry} from '../../load_geometry.ts';
 import {warnOnce} from '../../../util/util.ts';
 
@@ -6,12 +6,22 @@ import type Point from '@mapbox/point-geometry';
 import type {FilterSpecification} from '@maplibre/maplibre-gl-style-spec';
 import type {VectorTileFeatureLike} from '@maplibre/vt-pbf';
 import type {FeatureTable, SelectionVector} from '@maplibre/mlt';
-import type {BucketFeature, IndexedFeature} from '../../bucket.ts';
+import type {BucketFeature, BucketParameters, IndexedFeature} from '../../bucket.ts';
+import type {TypedStyleLayer} from '../../../style/style_layer/typed_style_layer.ts';
 import type {FeatureIndex} from '../../feature_index.ts';
 import type {MLTVectorTileLayer} from '../../../source/vector_tile_mlt.ts';
 
 /** Resolves one feature's rendered geometry. The default, `loadGeometryOrEmpty`, is a full ring decode. */
 type GeometryResolver = (feature: VectorTileFeatureLike, index: number) => Point[][];
+
+/**
+ * Whether a bucket created with `parameters` populates from the columns of an MLT layer, see
+ * `Bucket.isColumnar`: the layer is `'mlt'` and the filter of the bucket's first style layer can
+ * be planned over the columns at the bucket's zoom.
+ */
+export function isColumnarBucket({encoding, layers, zoom}: BucketParameters<TypedStyleLayer>): boolean {
+    return isColumnarBucketSupported(encoding, layers[0].filter, zoom, layers[0].id);
+}
 
 /** Distinguishes `populate()`'s row-based `IndexedFeature[]` input from its columnar `MLTVectorTileLayer` input. */
 export function isRowFeatureList(features: IndexedFeature[] | MLTVectorTileLayer): features is IndexedFeature[] {
@@ -22,13 +32,13 @@ export function isRowFeatureList(features: IndexedFeature[] | MLTVectorTileLayer
  * Applies the layer filter to `featureTable`'s columns and returns the selected feature indices.
  *
  * Throws if the filter cannot be planned over the columns. A bucket is columnar only when its
- * constructor found the filter plannable with `isColumnarBucketSupported()`, so a throw here means
+ * constructor found the filter plannable with {@link isColumnarBucket}, so a throw here means
  * the two disagree.
  */
 export function selectColumnarFeatures(featureTable: FeatureTable, filter: FilterSpecification | undefined, zoom: number): SelectionVector {
     const selection = filterFeatureTable(featureTable, filter, zoom);
     if (!selection) {
-        throw new Error('Columnar bucket filter could not be planned. isColumnarBucketSupported() should have caught this earlier.');
+        throw new Error('Columnar bucket filter could not be planned. isColumnarBucket() should have caught this earlier.');
     }
     return selection;
 }

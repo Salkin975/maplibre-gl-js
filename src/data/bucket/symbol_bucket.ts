@@ -33,8 +33,7 @@ import {getSizeData, MAX_PACKED_SIZE, MAX_GLYPHS} from '../../symbol/symbol_size
 import {performSymbolLayout} from '../../symbol/symbol_layout.ts';
 import {isOutsideTile} from '../extent_bounds.ts';
 import {register} from '../../util/web_worker_transfer.ts';
-import {isColumnarBucketSupported} from '@maplibre/mlt';
-import {isRowFeatureList} from './columnar/columnar_populate.ts';
+import {isColumnarBucket, isRowFeatureList} from './columnar/columnar_populate.ts';
 import {populateColumnarSymbol} from './columnar/columnar_symbol.ts';
 import {EvaluationParameters} from '../../style/evaluation_parameters.ts';
 import {Formatted, ResolvedImage} from '@maplibre/maplibre-gl-style-spec';
@@ -379,8 +378,8 @@ export class SymbolBucket implements Bucket {
         this.layerIds = this.layers.map(layer => layer.id);
         this.index = options.index;
         this.pixelRatio = options.pixelRatio;
+        this.isColumnar = isColumnarBucket(options);
         this.sourceLayerIndex = options.sourceLayerIndex;
-        this.isColumnar = isColumnarBucketSupported(options.encoding, this.layers[0].filter, options.zoom, this.layers[0].id);
         this.hasDependencies = true;
         this.hasRTLText = false;
         this.maxHeightOffset = 0;

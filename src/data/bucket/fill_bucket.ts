@@ -14,8 +14,7 @@ import {EvaluationParameters} from '../../style/evaluation_parameters.ts';
 import {subdividePolygon} from '../../render/subdivision.ts';
 import {fillLargeMeshArrays} from '../../render/fill_large_mesh_arrays.ts';
 import {warnOnce} from '../../util/util.ts';
-import {isColumnarBucketSupported} from '@maplibre/mlt';
-import {isRowFeatureList} from './columnar/columnar_populate.ts';
+import {isColumnarBucket, isRowFeatureList} from './columnar/columnar_populate.ts';
 import {isPolygon, populateColumnarFill, writeFillFromTile, type TileFillGeometry} from './columnar/columnar_fill.ts';
 
 import type {CanonicalTileID} from '../../tile/tile_id.ts';
@@ -80,7 +79,7 @@ export class FillBucket implements Bucket {
         this.hasDependencies = false;
         this.sdfPatterns = {};
         this.patternFeatures = [];
-        this.isColumnar = isColumnarBucketSupported(options.encoding, this.layers[0].filter, options.zoom, this.layers[0].id);
+        this.isColumnar = isColumnarBucket(options);
         this.sourceLayerIndex = options.sourceLayerIndex;
         this.tileGeometry = undefined;
 

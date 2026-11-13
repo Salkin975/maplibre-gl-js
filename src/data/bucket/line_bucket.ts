@@ -14,8 +14,7 @@ import {toEvaluationFeature} from '../evaluation_feature.ts';
 import {EvaluationParameters} from '../../style/evaluation_parameters.ts';
 import {subdivideVertexLine} from '../../render/subdivision.ts';
 import {clamp} from '../../util/util.ts';
-import {isColumnarBucketSupported} from '@maplibre/mlt';
-import {isRowFeatureList} from './columnar/columnar_populate.ts';
+import {isColumnarBucket, isRowFeatureList} from './columnar/columnar_populate.ts';
 import {populateColumnarLine} from './columnar/columnar_line.ts';
 
 import type {CanonicalTileID} from '../../tile/tile_id.ts';
@@ -161,7 +160,7 @@ export class LineBucket implements Bucket {
         this.hasDependencies = false;
         this.patternFeatures = [];
         this.lineClipsArray = [];
-        this.isColumnar = isColumnarBucketSupported(options.encoding, this.layers[0].filter, options.zoom, this.layers[0].id);
+        this.isColumnar = isColumnarBucket(options);
         this.sourceLayerIndex = options.sourceLayerIndex;
         this.hasLineClipColumns = true;
         this.gradients = {};
