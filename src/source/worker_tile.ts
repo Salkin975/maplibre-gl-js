@@ -106,10 +106,12 @@ export class WorkerTile {
             const sourceLayerIndex = sourceLayerCoder.encode(sourceLayerId);
             const mltLayer = isMLTVectorTileLayer(sourceLayer) ? sourceLayer : undefined;
             const features = [];
-            for (let index = 0; !mltLayer && index < sourceLayer.length; index++) {
-                const feature = sourceLayer.feature(index);
-                const id = featureIndex.getId(feature, sourceLayerId);
-                features.push({feature, id, index, sourceLayerIndex});
+            if (!mltLayer) {
+                for (let index = 0; index < sourceLayer.length; index++) {
+                    const feature = sourceLayer.feature(index);
+                    const id = featureIndex.getId(feature, sourceLayerId);
+                    features.push({feature, id, index, sourceLayerIndex});
+                }
             }
             let mltRows: IndexedFeature[] | undefined;
 
