@@ -1,8 +1,29 @@
 import {describe, test, expect} from 'vitest';
+import {encodeTile, decodeTile} from '@maplibre/mlt';
 import {AJAXError} from './ajax.ts';
 import {register, serialize, deserialize} from './web_worker_transfer.ts';
 import {featureFilter} from '@maplibre/maplibre-gl-style-spec';
 import {EvaluationParameters} from '../style/evaluation_parameters.ts';
+import {FillBucket} from '../data/bucket/fill_bucket.ts';
+import {LineBucket} from '../data/bucket/line_bucket.ts';
+import {SymbolBucket} from '../data/bucket/symbol_bucket.ts';
+import {MLTVectorTileLayer} from '../source/vector_tile_mlt.ts';
+import {CANONICAL, bucketParameters, createFillLayer, createLineLayer, createSymbolLayer, populateOptions} from './test/columnar_bucket.ts';
+
+/** Returns the MLT layer `name` of a tile with a polygon in `land`, a line in `roads` and a point in `places`. */
+function mltLayer(name: string): MLTVectorTileLayer {
+    const tables = decodeTile(encodeTile([
+        {name: 'land', extent: 4096, features: [{id: 1, geometry: {type: 'Polygon', coordinates: [[[0, 0], [400, 0], [400, 400], [0, 400]]]}, properties: {name: 'Park'}}]},
+        {name: 'roads', extent: 4096, features: [{id: 2, geometry: {type: 'LineString', coordinates: [[0, 2000], [3000, 2000]]}, properties: {name: 'Main St'}}]},
+        {name: 'places', extent: 4096, features: [{id: 3, geometry: {type: 'Point', coordinates: [100, 100]}, properties: {name: 'Bonn', icon: 'town'}}]}
+    ]));
+    return new MLTVectorTileLayer(tables.find(table => table.name === name));
+}
+
+/** Returns what the main thread receives when the worker sends it `bucket`. */
+function transferred<T>(bucket: T): T {
+    return deserialize(serialize(bucket, [])) as T;
+}
 
 describe('web worker transfer', () => {
     test('round trip', () => {
@@ -169,5 +190,51 @@ describe('web worker transfer', () => {
         expect(filter.filter(params, makeFeature({testProperty: 'value'}))).toBe(true);
         expect(filter.filter(params, makeFeature({testProperty: undefined}))).toBe(false);
         expect(filter.filter(params, makeFeature({}))).toBe(false);
+    });
+
+    test('a columnar FillBucket reaches the main thread with its arrays and without its worker-only fields', () => {
+        const bucket = new FillBucket(bucketParameters(createFillLayer()));
+        bucket.populate(mltLayer('land'), populateOptions().options, CANONICAL);
+        const vertexCount = bucket.layoutVertexArray.length;
+
+        const received = transferred(bucket);
+
+        expect(bucket.isColumnar).toBe(true);
+        expect(vertexCount).toBeGreaterThan(0);
+        expect(received).toBeInstanceOf(FillBucket);
+        expect(received.layoutVertexArray).toHaveLength(vertexCount);
+        expect(received.layerIds).toEqual(['fill']);
+        expect(received).not.toHaveProperty('isColumnar');
+        expect(received).not.toHaveProperty('sourceLayerIndex');
+    });
+
+    test('a columnar LineBucket reaches the main thread with its arrays and without its worker-only fields', () => {
+        const bucket = new LineBucket(bucketParameters(createLineLayer()));
+        bucket.populate(mltLayer('roads'), populateOptions().options, CANONICAL);
+        const vertexCount = bucket.layoutVertexArray.length;
+
+        const received = transferred(bucket);
+
+        expect(bucket.isColumnar).toBe(true);
+        expect(vertexCount).toBeGreaterThan(0);
+        expect(received).toBeInstanceOf(LineBucket);
+        expect(received.layoutVertexArray).toHaveLength(vertexCount);
+        expect(received.layerIds).toEqual(['line']);
+        expect(received).not.toHaveProperty('isColumnar');
+        expect(received).not.toHaveProperty('sourceLayerIndex');
+    });
+
+    test('a columnar SymbolBucket reaches the main thread with the source layer placement reads and without isColumnar', () => {
+        const bucket = new SymbolBucket({...bucketParameters(createSymbolLayer()), sourceLayerIndex: 2});
+        bucket.populate(mltLayer('places'), populateOptions().options, CANONICAL);
+
+        const received = transferred(bucket);
+
+        expect(bucket.isColumnar).toBe(true);
+        expect(bucket.features).toHaveLength(1);
+        expect(received).toBeInstanceOf(SymbolBucket);
+        expect(received.layerIds).toEqual(['symbol']);
+        expect(received.sourceLayerIndex).toBe(2);
+        expect(received).not.toHaveProperty('isColumnar');
     });
 });
