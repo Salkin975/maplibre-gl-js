@@ -1,4 +1,5 @@
 import {GeometryVector} from '@maplibre/mlt';
+import {VectorTileFeature} from '@mapbox/vector-tile';
 import {warnOnce} from '../../../util/util.ts';
 import {selectColumnarFeatures, materializeSelectedFeatures, loadGeometryOrEmpty} from './columnar_populate.ts';
 import {writeTessellatedFill, reserveTessellatedFill, buildTessellatedBoundingBox, extentScale, canWriteEarcutFill, writeEarcutFill, reserveEarcutFill, buildRingBoundingBoxes, needsSubdivision} from './columnar_mesh_arrays.ts';
@@ -84,7 +85,7 @@ export function writeFillFromTile(target: FillMeshTarget, tileGeometry: TileFill
 
 /** Whether a feature is a polygon, the only geometry a fill bucket writes straight from the tile. */
 export function isPolygon(feature: {type: VectorTileFeatureLike['type']}): boolean {
-    return feature.type === 3;
+    return VectorTileFeature.types[feature.type] === 'Polygon';
 }
 
 /**
