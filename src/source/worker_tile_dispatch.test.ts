@@ -118,7 +118,6 @@ describe('WorkerTile dispatch', () => {
     });
 
     test('keeps a row-based bucket of an MLT layer on rows', async () => {
-        // A filter that cannot be planned makes createBucket() return a row-based bucket for MLT.
         const data = createMltTile();
         const layerIndex = createLayerIndex(['unsupported']);
         const bucket = fakeBucket(false);

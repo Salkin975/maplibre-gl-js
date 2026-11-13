@@ -26,9 +26,9 @@ export function isRowFeatureList(features: IndexedFeature[] | MLTVectorTileLayer
  * holds polygons only, so for polygons its filter selection is already the answer and no geometry
  * selection is made.
  *
- * Throws if the filter cannot be planned over the columns: `createBucket()` only chose a columnar
- * bucket because `isColumnarBucketSupported()` had already answered the same question with "yes", so a
- * failure here means the two decisions diverged, an error that is meant to be visible.
+ * Throws if the filter cannot be planned over the columns. A bucket is columnar only when its
+ * constructor found the filter plannable with `isColumnarBucketSupported()`, so a throw here means
+ * the two disagree.
  */
 export function selectColumnarFeatures(
     featureTable: FeatureTable,
