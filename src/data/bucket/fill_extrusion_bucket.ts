@@ -15,6 +15,7 @@ import {EvaluationParameters} from '../../style/evaluation_parameters.ts';
 import {subdividePolygon, subdivideVertexLine} from '../../render/subdivision.ts';
 import {fillLargeMeshArrays} from '../../render/fill_large_mesh_arrays.ts';
 import {getTileUnitsForMeters, roundPolygonCornersIfNeeded, roundedWallNormals} from './round_polygon_corners.ts';
+import {addPhase, phaseStart} from '../../source/worker_timing.ts';
 
 import type {CanonicalTileID} from '../../tile/tile_id.ts';
 import type {
@@ -101,6 +102,7 @@ export class FillExtrusionBucket implements Bucket {
         this.features = [];
         this.hasDependencies = hasPattern('fill-extrusion', this.layers, options);
 
+        let phaseSince = phaseStart();
         const globalProperties = new EvaluationParameters(this.zoom);
         const layer = this.layers[0];
         const roundedCornerDistanceInMeters = layer.layout.get('fill-extrusion-rounded-corner-distance');
@@ -124,15 +126,19 @@ export class FillExtrusionBucket implements Bucket {
                 type: feature.type,
                 patterns: {}
             };
+            phaseSince = addPhase('selectMaterialize', phaseSince);
 
             if (this.hasDependencies) {
                 this.features.push(addPatternDependencies('fill-extrusion', this.layers, bucketFeature, {zoom: this.zoom}, options));
             } else {
                 this.addFeature(bucketFeature, bucketFeature.geometry, index, canonical, {}, options.subdivisionGranularity);
             }
+            phaseSince = addPhase('write', phaseSince);
 
             options.featureIndex.insert(feature, bucketFeature.geometry, index, sourceLayerIndex, this.index, true);
+            phaseSince = addPhase('featureIndex', phaseSince);
         }
+        addPhase('selectMaterialize', phaseSince);
     }
 
     addFeatures({options, canonical, patternPositions}: BucketDependencyParameters): void {

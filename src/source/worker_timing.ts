@@ -20,10 +20,16 @@ export function phaseStart(): number {
     return LOG_WORKER_TIMING ? performance.now() : 0;
 }
 
-/** Adds the time since `since`, a value from {@link phaseStart}, to the named phase of the bucket being populated. */
-export function addPhase(name: string, since: number): void {
-    if (!LOG_WORKER_TIMING) return;
-    phases[name] = (phases[name] ?? 0) + performance.now() - since;
+/**
+ * Adds the time since `since`, a value from {@link phaseStart}, to the named phase of the bucket being
+ * populated, and returns the time the phase ends at, so the next phase can start there without reading
+ * the clock again; 0 while the timing is off.
+ */
+export function addPhase(name: string, since: number): number {
+    if (!LOG_WORKER_TIMING) return 0;
+    const end = performance.now();
+    phases[name] = (phases[name] ?? 0) + end - since;
+    return end;
 }
 
 /** Returns the phases recorded since the last call and starts the next bucket from none. */
