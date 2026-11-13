@@ -8,6 +8,7 @@ import {toEvaluationFeature} from '../evaluation_feature.ts';
 import {isOutsideTile} from '../extent_bounds.ts';
 import {register} from '../../util/web_worker_transfer.ts';
 import {EvaluationParameters} from '../../style/evaluation_parameters.ts';
+import {addPhase, phaseStart} from '../../source/worker_timing.ts';
 
 import type {CircleGranularity} from '../../render/subdivision_granularity_settings.ts';
 import type {CanonicalTileID} from '../../tile/tile_id.ts';
@@ -102,6 +103,7 @@ export class CircleBucket<Layer extends CircleStyleLayer | HeatmapStyleLayer> im
 
         const granularity = subdivide ? options.subdivisionGranularity.circle : 1;
 
+        const selectMaterializeStart = phaseStart();
         const globalProperties = new EvaluationParameters(this.zoom);
         const needGeometry = this.layers[0]._featureFilter.needGeometry;
         for (const {feature, id, index, sourceLayerIndex} of features) {
@@ -127,6 +129,7 @@ export class CircleBucket<Layer extends CircleStyleLayer | HeatmapStyleLayer> im
             bucketFeatures.push(bucketFeature);
 
         }
+        addPhase('selectMaterialize', selectMaterializeStart);
 
         if (sortFeaturesByKey) {
             bucketFeatures.sort((a, b) => a.sortKey - b.sortKey);
@@ -136,8 +139,13 @@ export class CircleBucket<Layer extends CircleStyleLayer | HeatmapStyleLayer> im
             const {geometry, index, sourceLayerIndex} = bucketFeature;
             const feature = features[index].feature;
 
+            const writeStart = phaseStart();
             this.addFeature(bucketFeature, geometry, index, canonical, granularity);
+            addPhase('write', writeStart);
+
+            const indexStart = phaseStart();
             options.featureIndex.insert(feature, geometry, index, sourceLayerIndex, this.index);
+            addPhase('featureIndex', indexStart);
         }
     }
 
