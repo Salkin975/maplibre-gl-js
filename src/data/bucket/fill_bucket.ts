@@ -13,6 +13,7 @@ import {EvaluationParameters} from '../../style/evaluation_parameters.ts';
 import {subdividePolygon} from '../../render/subdivision.ts';
 import {fillLargeMeshArrays} from '../../render/fill_large_mesh_arrays.ts';
 import {warnOnce} from '../../util/util.ts';
+import {addPhase, phaseStart} from '../../source/worker_timing.ts';
 
 import type {CanonicalTileID} from '../../tile/tile_id.ts';
 import type {
@@ -85,6 +86,7 @@ export class FillBucket implements Bucket {
         const sortFeaturesByKey = !fillSortKey.isConstant();
         const bucketFeatures: BucketFeature[] = [];
 
+        const selectMaterializeStart = phaseStart();
         const globalProperties = new EvaluationParameters(this.zoom);
         const needGeometry = this.layers[0]._featureFilter.needGeometry;
         for (const {feature, id, index, sourceLayerIndex} of features) {
@@ -109,6 +111,7 @@ export class FillBucket implements Bucket {
 
             bucketFeatures.push(bucketFeature);
         }
+        addPhase('selectMaterialize', selectMaterializeStart);
 
         this.addBucketFeatures(bucketFeatures, index => features[index].feature, options, canonical);
     }
@@ -132,6 +135,7 @@ export class FillBucket implements Bucket {
         for (const bucketFeature of bucketFeatures) {
             const {geometry, index, sourceLayerIndex} = bucketFeature;
 
+            const writeStart = phaseStart();
             if (this.hasDependencies) {
                 const patternFeature = addPatternDependencies('fill', this.layers, bucketFeature, {zoom: this.zoom}, options);
                 // pattern features are added only once the pattern is loaded into the image atlas
@@ -140,8 +144,11 @@ export class FillBucket implements Bucket {
             } else {
                 this.addFeature(bucketFeature, geometry, index, canonical, {}, options.subdivisionGranularity);
             }
+            addPhase('write', writeStart);
 
+            const indexStart = phaseStart();
             options.featureIndex.insert(featureAt(index), geometry, index, sourceLayerIndex, this.index);
+            addPhase('featureIndex', indexStart);
         }
     }
 
