@@ -1,9 +1,8 @@
 import {describe, test, expect, vi, afterEach} from 'vitest';
-import {decodeTile, encodeTile, SINGLE_PART_GEOMETRY_TYPE, type FeatureTable, type SelectionVector} from '@maplibre/mlt';
+import {decodeTile, encodeTile, type FeatureTable, type SelectionVector} from '@maplibre/mlt';
 import {MLTVectorTileLayer} from '../../../source/vector_tile_mlt.ts';
 import {FeatureIndex} from '../../feature_index.ts';
 import {OverscaledTileID} from '../../../tile/tile_id.ts';
-import {preTessellatedTables} from '../../../util/test/mlt.ts';
 import {
     isRowFeatureList,
     loadGeometryOrEmpty,
@@ -59,40 +58,6 @@ describe('selectColumnarFeatures', () => {
         expect(indices(selectColumnarFeatures(decodeMixedLayer(), undefined, 5))).toEqual([0, 1, 2, 3]);
     });
 
-    test('narrows the selection to the renderable geometry types', () => {
-        const table = decodeMixedLayer();
-
-        expect(indices(selectColumnarFeatures(table, classIsA, 5, [SINGLE_PART_GEOMETRY_TYPE.POLYGON]))).toEqual([3]);
-        expect(indices(selectColumnarFeatures(table, classIsA, 5, [
-            SINGLE_PART_GEOMETRY_TYPE.LINESTRING,
-            SINGLE_PART_GEOMETRY_TYPE.POLYGON
-        ]))).toEqual([1, 3]);
-        expect(indices(selectColumnarFeatures(table, undefined, 5, [SINGLE_PART_GEOMETRY_TYPE.POINT]))).toEqual([0]);
-    });
-
-    test('scans a table for a set of geometry types once, however many layers ask for it', () => {
-        const table = decodeMixedLayer();
-        const filter = vi.spyOn(table.geometryVector, 'filter');
-        const lineTypes = [SINGLE_PART_GEOMETRY_TYPE.LINESTRING, SINGLE_PART_GEOMETRY_TYPE.POLYGON];
-
-        expect(indices(selectColumnarFeatures(table, classIsA, 5, lineTypes))).toEqual([1, 3]);
-        expect(indices(selectColumnarFeatures(table, ['==', 'class', 'b'], 5, lineTypes))).toEqual([2]);
-        expect(filter).toHaveBeenCalledTimes(2);
-
-        expect(indices(selectColumnarFeatures(table, classIsA, 5, [SINGLE_PART_GEOMETRY_TYPE.POLYGON]))).toEqual([3]);
-        expect(filter).toHaveBeenCalledTimes(3);
-    });
-
-    test('selects every polygon of a pre-tessellated layer without asking its geometry vector', () => {
-        const [table] = preTessellatedTables();
-        const filter = vi.spyOn(table.geometryVector, 'filter');
-
-        const selection = selectColumnarFeatures(table, undefined, 5, [SINGLE_PART_GEOMETRY_TYPE.POLYGON]);
-
-        expect(indices(selection)).toEqual(Array.from({length: table.numFeatures}, (_, i) => i));
-        expect(filter).not.toHaveBeenCalled();
-    });
-
     test('throws when the filter cannot be planned, since the dispatch should have caught it', () => {
         const unsupported = ['within', {type: 'Polygon', coordinates: [[[0, 0], [1, 0], [1, 1], [0, 0]]]}] as FilterSpecification;
 
@@ -104,7 +69,7 @@ describe('materializeSelectedFeatures', () => {
     test('reads only the selected rows', () => {
         const layer = new MLTVectorTileLayer(decodeMixedLayer());
         const feature = vi.spyOn(layer, 'feature');
-        const selection = selectColumnarFeatures(layer.featureTable, classIsA, 5, [SINGLE_PART_GEOMETRY_TYPE.POLYGON]);
+        const selection = selectColumnarFeatures(layer.featureTable, ['==', '$id', 13], 5);
 
         const features = materializeSelectedFeatures(layer, selection, 7, createFeatureIndex());
 
@@ -164,7 +129,7 @@ describe('materializeSelectedFeatures', () => {
 
     test('takes the geometry from the resolver of the bucket instead of decoding the rings', () => {
         const layer = new MLTVectorTileLayer(decodeMixedLayer());
-        const selection = selectColumnarFeatures(layer.featureTable, classIsA, 5, [SINGLE_PART_GEOMETRY_TYPE.POLYGON]);
+        const selection = selectColumnarFeatures(layer.featureTable, ['==', '$id', 13], 5);
         const resolveGeometry = vi.fn(() => []);
 
         const features = materializeSelectedFeatures(layer, selection, 0, createFeatureIndex(), {resolveGeometry});

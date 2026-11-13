@@ -3,6 +3,7 @@ import {encodeTile, decodeTile} from '@maplibre/mlt';
 import {GEOJSONVT_CLIP_END, GEOJSONVT_CLIP_START} from '@maplibre/geojson-vt';
 import {LineBucket} from '../line_bucket.ts';
 import {MLTVectorTileLayer} from '../../../source/vector_tile_mlt.ts';
+import {preTessellatedTables} from '../../../util/test/mlt.ts';
 import {CANONICAL, LINE_BUCKETS, bucketParameters, bytes, createLineLayer, lineArrays, populateBoth, populateOptions, rowsOf} from '../../../util/test/columnar_bucket.ts';
 
 /** A zigzag with sharp and obtuse corners and a duplicate vertex, a straight line, a polygon. */
@@ -61,6 +62,49 @@ describe('LineBucket populated from the columns of an MLT layer', () => {
 
         expect(columnar).toEqual(row);
         expect(columnar.indexed).toEqual([2, 1, 0]);
+    });
+
+    test('draws the lines and polygons of a layer that also holds points, and not the points', () => {
+        const table = decodeTile(encodeTile([{
+            name: 'roads',
+            extent: 4096,
+            features: [
+                {id: 1, geometry: {type: 'Point', coordinates: [100, 100]}, properties: {}},
+                {id: 2, geometry: {type: 'LineString', coordinates: [[0, 0], [1000, 0]]}, properties: {}},
+                {id: 3, geometry: {type: 'Polygon', coordinates: [[[500, 500], [900, 500], [900, 900], [500, 900]]]}, properties: {}}
+            ]
+        }]))[0];
+        const {options, insert} = populateOptions();
+        const bucket = new LineBucket(bucketParameters(createLineLayer()));
+
+        bucket.populate(new MLTVectorTileLayer(table), options, CANONICAL);
+
+        expect(insert.mock.calls.map(call => call[2])).toEqual([1, 2]);
+    });
+
+    test('finds the lines and polygons of a table once, however many line layers draw it', () => {
+        const sourceLayer = new MLTVectorTileLayer(decodeTile(encodeFeatures())[0]);
+        const filter = vi.spyOn(sourceLayer.featureTable.geometryVector, 'filter');
+        new LineBucket(bucketParameters(createLineLayer(['==', 'class', 'a']))).populate(sourceLayer, populateOptions().options, CANONICAL);
+        const scans = filter.mock.calls.length;
+        const {options, insert} = populateOptions();
+
+        new LineBucket(bucketParameters(createLineLayer(['==', 'class', 'b']))).populate(sourceLayer, options, CANONICAL);
+
+        expect(scans).toBeGreaterThan(0);
+        expect(filter).toHaveBeenCalledTimes(scans);
+        expect(insert.mock.calls.map(call => call[2])).toEqual([1]);
+    });
+
+    test('outlines every polygon of a pre-tessellated layer without scanning its geometry types', () => {
+        const [table] = preTessellatedTables();
+        const filter = vi.spyOn(table.geometryVector, 'filter');
+        const {options, insert} = populateOptions();
+
+        new LineBucket(bucketParameters(createLineLayer())).populate(new MLTVectorTileLayer(table), options, CANONICAL);
+
+        expect(filter).not.toHaveBeenCalled();
+        expect(insert).toHaveBeenCalledTimes(table.numFeatures);
     });
 
     test('reads each selected feature once and hands the same object to the spatial index', () => {

@@ -1,6 +1,5 @@
-import {filterFeatureTable, unionSelectionVectors, intersectSelectionVectors, SINGLE_PART_GEOMETRY_TYPE} from '@maplibre/mlt';
+import {filterFeatureTable} from '@maplibre/mlt';
 import {loadGeometry} from '../../load_geometry.ts';
-import {isPreTessellated} from '../../../source/vector_tile_mlt.ts';
 import {warnOnce} from '../../../util/util.ts';
 
 import type Point from '@mapbox/point-geometry';
@@ -22,58 +21,14 @@ export function isRowFeatureList(features: IndexedFeature[] | MLTVectorTileLayer
 /**
  * Applies the layer filter to `featureTable`'s columns and returns the selected feature indices.
  *
- * When `renderableGeometryTypes` is given, the result is narrowed to features of those geometry types -
- * the union of their per-type selections, intersected with the filter selection. A pre-tessellated layer
- * holds polygons only, so for polygons its filter selection is already the answer and no geometry
- * selection is made.
- *
  * Throws if the filter cannot be planned over the columns. A bucket is columnar only when its
  * constructor found the filter plannable with `isColumnarBucketSupported()`, so a throw here means
  * the two disagree.
  */
-export function selectColumnarFeatures(
-    featureTable: FeatureTable,
-    filter: FilterSpecification | undefined,
-    zoom: number,
-    renderableGeometryTypes?: SINGLE_PART_GEOMETRY_TYPE[],
-): SelectionVector {
-    const filterSelection = filterFeatureTable(featureTable, filter, zoom);
-    if (!filterSelection) {
-        throw new Error('Columnar bucket filter could not be planned. isColumnarBucketSupported() should have caught this earlier.');
-    }
-    if (!renderableGeometryTypes) return filterSelection;
-
-    const geometryVector = featureTable.geometryVector;
-    if (!geometryVector) {
-        throw new Error('Columnar bucket needs geometry, but the feature table has no geometry column.');
-    }
-    const holdsPolygonsOnly = isPreTessellated(geometryVector);
-    if (holdsPolygonsOnly && renderableGeometryTypes.includes(SINGLE_PART_GEOMETRY_TYPE.POLYGON)) return filterSelection;
-
-    return intersectSelectionVectors(filterSelection, selectGeometryTypes(geometryVector, renderableGeometryTypes, featureTable.numFeatures));
-}
-
-/**
- * The features of each set of geometry types, per geometry vector, keyed by the types joined with
- * commas. Every line layer of a source layer asks for the same set, and finding it is a scan over all
- * features of the table. A table that has released its columns decodes them into a new geometry
- * vector, whose selections are then found anew.
- */
-const geometryTypeSelections = new WeakMap<FeatureTable['geometryVector'], Map<string, SelectionVector>>();
-
-/** Returns the features of `geometryVector` whose geometry is one of `types`, scanning for each set of types only once. */
-function selectGeometryTypes(geometryVector: FeatureTable['geometryVector'], types: SINGLE_PART_GEOMETRY_TYPE[], numFeatures: number): SelectionVector {
-    let selections = geometryTypeSelections.get(geometryVector);
-    if (!selections) {
-        selections = new Map();
-        geometryTypeSelections.set(geometryVector, selections);
-    }
-
-    const key = types.join(',');
-    let selection = selections.get(key);
+export function selectColumnarFeatures(featureTable: FeatureTable, filter: FilterSpecification | undefined, zoom: number): SelectionVector {
+    const selection = filterFeatureTable(featureTable, filter, zoom);
     if (!selection) {
-        selection = unionSelectionVectors(types.map(type => geometryVector.filter(type)), numFeatures);
-        selections.set(key, selection);
+        throw new Error('Columnar bucket filter could not be planned. isColumnarBucketSupported() should have caught this earlier.');
     }
     return selection;
 }
