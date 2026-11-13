@@ -1,7 +1,7 @@
-import {GpuVector, SINGLE_PART_GEOMETRY_TYPE} from '@maplibre/mlt';
+import {SINGLE_PART_GEOMETRY_TYPE} from '@maplibre/mlt';
 import {GEOJSONVT_CLIP_END, GEOJSONVT_CLIP_START} from '@maplibre/geojson-vt';
 import {warnOnce} from '../../../util/util.ts';
-import {hasRingTopology} from '../../../source/vector_tile_mlt.ts';
+import {hasRingTopology, isPreTessellated} from '../../../source/vector_tile_mlt.ts';
 import {selectColumnarFeatures, materializeSelectedFeatures} from './columnar_populate.ts';
 
 import type {VectorTileFeatureLike} from '@maplibre/vt-pbf';
@@ -24,7 +24,7 @@ export function populateColumnarLine(bucket: LineBucket, sourceLayer: MLTVectorT
     const layer = bucket.layers[0];
 
     const geometryVector = featureTable.geometryVector;
-    if (geometryVector instanceof GpuVector && !hasRingTopology(geometryVector)) {
+    if (isPreTessellated(geometryVector) && !hasRingTopology(geometryVector)) {
         warnOnce(`Line layer "${layer.id}" reads a pre-tessellated source layer that stores only triangles, which holds no line for it to draw, so the layer is skipped.`);
         return;
     }

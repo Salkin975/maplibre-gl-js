@@ -1,7 +1,7 @@
 import {readFileSync} from 'fs';
 import path from 'path';
 import {decodeTile, FeatureTable, GEOMETRY_TYPE, GpuVector} from '@maplibre/mlt';
-import {MLTVectorTileLayer} from '../../source/vector_tile_mlt.ts';
+import {isPreTessellated, MLTVectorTileLayer} from '../../source/vector_tile_mlt.ts';
 
 /** A {@link GpuVector} over the arrays it is given, with a geometry type per feature. */
 class TestGpuVector extends GpuVector {
@@ -63,5 +63,5 @@ export function triangleOnlyLayer(): MLTVectorTileLayer {
 /** Returns the pre-tessellated layers of a zoom-5 tile from the integration assets, all of them with ring topology. */
 export function preTessellatedTables(): FeatureTable[] {
     const file = path.join(__dirname, '../../../test/integration/assets/tiles/mlt/5/22/12.mlt');
-    return decodeTile(new Uint8Array(readFileSync(file))).filter(table => table.geometryVector instanceof GpuVector);
+    return decodeTile(new Uint8Array(readFileSync(file))).filter(table => isPreTessellated(table.geometryVector));
 }

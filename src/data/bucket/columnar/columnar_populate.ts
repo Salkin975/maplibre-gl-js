@@ -1,5 +1,6 @@
-import {filterFeatureTable, unionSelectionVectors, intersectSelectionVectors, GpuVector, SINGLE_PART_GEOMETRY_TYPE} from '@maplibre/mlt';
+import {filterFeatureTable, unionSelectionVectors, intersectSelectionVectors, SINGLE_PART_GEOMETRY_TYPE} from '@maplibre/mlt';
 import {loadGeometry} from '../../load_geometry.ts';
+import {isPreTessellated} from '../../../source/vector_tile_mlt.ts';
 import {warnOnce} from '../../../util/util.ts';
 
 import type Point from '@mapbox/point-geometry';
@@ -46,7 +47,7 @@ export function selectColumnarFeatures(
     if (!geometryVector) {
         throw new Error('Columnar bucket needs geometry, but the feature table has no geometry column.');
     }
-    const holdsPolygonsOnly = geometryVector instanceof GpuVector;
+    const holdsPolygonsOnly = isPreTessellated(geometryVector);
     if (holdsPolygonsOnly && renderableGeometryTypes.includes(SINGLE_PART_GEOMETRY_TYPE.POLYGON)) return filterSelection;
 
     return intersectSelectionVectors(filterSelection, selectGeometryTypes(geometryVector, renderableGeometryTypes, featureTable.numFeatures));

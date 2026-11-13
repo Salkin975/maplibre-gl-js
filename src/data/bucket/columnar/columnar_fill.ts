@@ -1,10 +1,11 @@
-import {GeometryVector, GpuVector} from '@maplibre/mlt';
+import {GeometryVector} from '@maplibre/mlt';
 import {warnOnce} from '../../../util/util.ts';
 import {selectColumnarFeatures, materializeSelectedFeatures, loadGeometryOrEmpty} from './columnar_populate.ts';
 import {writeTessellatedFill, reserveTessellatedFill, buildTessellatedBoundingBox, extentScale, canWriteEarcutFill, writeEarcutFill, reserveEarcutFill, buildRingBoundingBoxes, needsSubdivision} from './columnar_mesh_arrays.ts';
-import {hasRingTopology} from '../../../source/vector_tile_mlt.ts';
+import {hasRingTopology, isPreTessellated} from '../../../source/vector_tile_mlt.ts';
 
 import type Point from '@mapbox/point-geometry';
+import type {GpuVector} from '@maplibre/mlt';
 import type {VectorTileFeatureLike} from '@maplibre/vt-pbf';
 import type {MLTVectorTileLayer} from '../../../source/vector_tile_mlt.ts';
 import type {CanonicalTileID} from '../../../tile/tile_id.ts';
@@ -45,7 +46,7 @@ export function populateColumnarFill(bucket: FillBucket, sourceLayer: MLTVectorT
 
     const geometryVector = featureTable.geometryVector;
     const granularity = options.subdivisionGranularity.fill.getGranularityForZoomLevel(canonical.z);
-    const usesTileMesh = geometryVector instanceof GpuVector && !needsSubdivision(canonical, granularity);
+    const usesTileMesh = isPreTessellated(geometryVector) && !needsSubdivision(canonical, granularity);
     if (usesTileMesh && !hasRingTopology(geometryVector)) {
         warnOnce(`Fill layer "${layer.id}" is pre-tessellated without ring topology, so it draws no outline and "fill-outline-color" has no effect on it.`);
     }
@@ -77,7 +78,7 @@ export function populateColumnarFill(bucket: FillBucket, sourceLayer: MLTVectorT
  */
 export function writeFillFromTile(target: FillMeshTarget, tileGeometry: TileFillGeometry, index: number): void {
     const {geometryVector, scale} = tileGeometry;
-    if (geometryVector instanceof GpuVector) writeTessellatedFill(target, geometryVector, index, scale);
+    if (isPreTessellated(geometryVector)) writeTessellatedFill(target, geometryVector, index, scale);
     else writeEarcutFill(target, geometryVector, index, scale);
 }
 
@@ -94,7 +95,7 @@ function indexedGeometry(tileGeometry: TileFillGeometry | undefined, feature: Ve
     if (!tileGeometry || !isPolygon(feature)) return loadGeometryOrEmpty(feature);
 
     const {geometryVector, scale} = tileGeometry;
-    return geometryVector instanceof GpuVector ?
+    return isPreTessellated(geometryVector) ?
         buildTessellatedBoundingBox(geometryVector, index, scale) :
         buildRingBoundingBoxes(geometryVector, index, scale);
 }

@@ -78,7 +78,7 @@ class MLTVectorTileFeature implements VectorTileFeatureLike {
     loadGeometry(): Point[][] {
         const geometryVector = this.layer.featureTable.geometryVector;
         if (!geometryVector) return [];
-        if (geometryVector instanceof GpuVector && !hasRingTopology(geometryVector)) {
+        if (isPreTessellated(geometryVector) && !hasRingTopology(geometryVector)) {
             return trianglesAsRings(geometryVector, this.index);
         }
         if (geometryVector instanceof GeometryVector && geometryVector.vertexOffsets && geometryVector.mortonSettings) {
@@ -168,6 +168,14 @@ function readGeometry(geometryVector: GeometryVector | GpuVector, index: number)
         default:
             throw new Error(`The geometry type ${geometryVector.geometryType(index)} is not supported.`);
     }
+}
+
+/**
+ * Tells whether a layer is pre-tessellated: it holds polygons only and stores their triangles, which a
+ * fill bucket can draw without triangulating them.
+ */
+export function isPreTessellated(geometryVector: GeometryVector | GpuVector | null): geometryVector is GpuVector {
+    return geometryVector instanceof GpuVector;
 }
 
 /**
