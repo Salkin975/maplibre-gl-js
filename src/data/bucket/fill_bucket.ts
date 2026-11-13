@@ -15,7 +15,7 @@ import {fillLargeMeshArrays} from '../../render/fill_large_mesh_arrays.ts';
 import {warnOnce} from '../../util/util.ts';
 import {isColumnarBucketSupported} from '@maplibre/mlt';
 import {isRowFeatureList} from './columnar/columnar_populate.ts';
-import {isPolygon, populateColumnarFill, writeDirectFill, type DirectFillGeometry} from './columnar/columnar_fill.ts';
+import {isPolygon, populateColumnarFill, writeFillFromTile, type TileFillGeometry} from './columnar/columnar_fill.ts';
 
 import type {CanonicalTileID} from '../../tile/tile_id.ts';
 import type {
@@ -52,7 +52,7 @@ export class FillBucket implements Bucket {
     /** The position of the bucket's source layer in the tile, which a feature read from an MLT layer's columns is indexed under. */
     sourceLayerIndex: number;
     /** Set while polygons are written straight from an MLT tile's geometry, see {@link populateColumnarFill}. */
-    directGeometry: DirectFillGeometry | undefined;
+    tileGeometry: TileFillGeometry | undefined;
 
     layoutVertexArray: FillLayoutArray;
     layoutVertexBuffer: VertexBuffer;
@@ -81,7 +81,7 @@ export class FillBucket implements Bucket {
         this.patternFeatures = [];
         this.isColumnar = isColumnarBucketSupported(options.encoding, this.layers[0].filter, options.zoom, this.layers[0].id);
         this.sourceLayerIndex = options.sourceLayerIndex;
-        this.directGeometry = undefined;
+        this.tileGeometry = undefined;
 
         this.layoutVertexArray = new FillLayoutArray();
         this.indexArray = new TriangleIndexArray();
@@ -176,7 +176,7 @@ export class FillBucket implements Bucket {
         for (const feature of this.patternFeatures) {
             this.addFeature(feature, feature.geometry, feature.index, canonical, patternPositions, options.subdivisionGranularity);
         }
-        this.directGeometry = undefined;
+        this.tileGeometry = undefined;
     }
 
     private detectSdfPatterns(imageMap: GetImagesResponse): void {
@@ -240,8 +240,8 @@ export class FillBucket implements Bucket {
     addFeature(feature: BucketFeature, geometry: Point[][], index: number, canonical: CanonicalTileID, imagePositions: {
         [_: string]: ImagePosition;
     }, subdivisionGranularity: SubdivisionGranularitySetting): void {
-        if (this.directGeometry && isPolygon(feature)) {
-            writeDirectFill(this, this.directGeometry, index);
+        if (this.tileGeometry && isPolygon(feature)) {
+            writeFillFromTile(this, this.tileGeometry, index);
         } else {
             this.addPolygons(geometry, canonical, subdivisionGranularity);
         }
@@ -272,4 +272,4 @@ export class FillBucket implements Bucket {
     }
 }
 
-register('FillBucket', FillBucket, {omit: ['layers', 'patternFeatures', 'isColumnar', 'sourceLayerIndex', 'directGeometry']});
+register('FillBucket', FillBucket, {omit: ['layers', 'patternFeatures', 'isColumnar', 'sourceLayerIndex', 'tileGeometry']});

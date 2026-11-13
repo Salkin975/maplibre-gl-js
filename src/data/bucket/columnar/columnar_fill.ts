@@ -19,7 +19,7 @@ import type {FillMeshTarget} from './columnar_mesh_arrays.ts';
  * Neither a `GpuVector` nor a `GeometryVector` is a class `web_worker_transfer` knows how to send, so
  * a bucket must have let go of this before it is structure-cloned to the main thread.
  */
-export type DirectFillGeometry = {
+export type TileFillGeometry = {
     geometryVector: GpuVector | GeometryVector;
     scale: number;
 };
@@ -36,7 +36,7 @@ export type DirectFillGeometry = {
  * encloses. Sorting, pattern handling and indexing are the bucket's `addBucketFeatures()`, the same
  * as for row features.
  *
- * `bucket.directGeometry` is set while features are written. A bucket that waits for its patterns
+ * `bucket.tileGeometry` is set while features are written. A bucket that waits for its patterns
  * keeps it until `addFeatures()` has written them.
  */
 export function populateColumnarFill(bucket: FillBucket, sourceLayer: MLTVectorTileLayer, options: PopulateParameters, canonical: CanonicalTileID): void {
@@ -45,29 +45,29 @@ export function populateColumnarFill(bucket: FillBucket, sourceLayer: MLTVectorT
 
     const geometryVector = featureTable.geometryVector;
     const granularity = options.subdivisionGranularity.fill.getGranularityForZoomLevel(canonical.z);
-    const isTessellated = geometryVector instanceof GpuVector && !needsSubdivision(canonical, granularity);
-    if (isTessellated && !hasRingTopology(geometryVector)) {
+    const usesTileMesh = geometryVector instanceof GpuVector && !needsSubdivision(canonical, granularity);
+    if (usesTileMesh && !hasRingTopology(geometryVector)) {
         warnOnce(`Fill layer "${layer.id}" is pre-tessellated without ring topology, so it draws no outline and "fill-outline-color" has no effect on it.`);
     }
     const isEarcut = geometryVector instanceof GeometryVector && canWriteEarcutFill(geometryVector, canonical, granularity);
-    const direct: DirectFillGeometry | undefined = isTessellated || isEarcut ? {geometryVector, scale: extentScale(featureTable.extent)} : undefined;
-    bucket.directGeometry = direct;
+    const tileGeometry: TileFillGeometry | undefined = usesTileMesh || isEarcut ? {geometryVector, scale: extentScale(featureTable.extent)} : undefined;
+    bucket.tileGeometry = tileGeometry;
 
     const fillSortKey = layer.layout.get('fill-sort-key');
     const selection = selectColumnarFeatures(featureTable, layer.filter, bucket.zoom);
     const sourceFeatures: VectorTileFeatureLike[] = [];
     const bucketFeatures = materializeSelectedFeatures(sourceLayer, selection, bucket.sourceLayerIndex, options.featureIndex, {
         features: sourceFeatures,
-        resolveGeometry: (feature, index) => indexedGeometry(direct, feature, index),
+        resolveGeometry: (feature, index) => indexedGeometry(tileGeometry, feature, index),
         sortKey: fillSortKey.isConstant()
             ? undefined
             : (bucketFeature) => fillSortKey.evaluate(bucketFeature, {}, canonical, options.availableImages),
     });
 
-    if (isTessellated) reserveTessellatedFill(bucket, geometryVector, bucketFeatures);
+    if (usesTileMesh) reserveTessellatedFill(bucket, geometryVector, bucketFeatures);
     else if (isEarcut) reserveEarcutFill(bucket, geometryVector, bucketFeatures.filter(isPolygon));
     bucket.addBucketFeatures(bucketFeatures, index => sourceFeatures[index], options, canonical);
-    if (!bucket.hasDependencies) bucket.directGeometry = undefined;
+    if (!bucket.hasDependencies) bucket.tileGeometry = undefined;
 }
 
 /**
@@ -75,8 +75,8 @@ export function populateColumnarFill(bucket: FillBucket, sourceLayer: MLTVectorT
  * `target`. The feature's own `geometry` is then only the bounding boxes `FeatureIndex` needs, see
  * {@link populateColumnarFill}.
  */
-export function writeDirectFill(target: FillMeshTarget, direct: DirectFillGeometry, index: number): void {
-    const {geometryVector, scale} = direct;
+export function writeFillFromTile(target: FillMeshTarget, tileGeometry: TileFillGeometry, index: number): void {
+    const {geometryVector, scale} = tileGeometry;
     if (geometryVector instanceof GpuVector) writeTessellatedFill(target, geometryVector, index, scale);
     else writeEarcutFill(target, geometryVector, index, scale);
 }
@@ -90,10 +90,10 @@ export function isPolygon(feature: {type: VectorTileFeatureLike['type']}): boole
  * The geometry a feature is indexed with for `queryRenderedFeatures`: its bounding boxes when the
  * bucket writes it straight from the tile's geometry, else its rings.
  */
-function indexedGeometry(direct: DirectFillGeometry | undefined, feature: VectorTileFeatureLike, index: number): Point[][] {
-    if (!direct || !isPolygon(feature)) return loadGeometryOrEmpty(feature);
+function indexedGeometry(tileGeometry: TileFillGeometry | undefined, feature: VectorTileFeatureLike, index: number): Point[][] {
+    if (!tileGeometry || !isPolygon(feature)) return loadGeometryOrEmpty(feature);
 
-    const {geometryVector, scale} = direct;
+    const {geometryVector, scale} = tileGeometry;
     return geometryVector instanceof GpuVector ?
         buildTessellatedBoundingBox(geometryVector, index, scale) :
         buildRingBoundingBoxes(geometryVector, index, scale);

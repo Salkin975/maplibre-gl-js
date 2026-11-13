@@ -46,8 +46,8 @@ export function selectColumnarFeatures(
     if (!geometryVector) {
         throw new Error('Columnar bucket needs geometry, but the feature table has no geometry column.');
     }
-    const isPolygonOnly = geometryVector instanceof GpuVector && renderableGeometryTypes.includes(SINGLE_PART_GEOMETRY_TYPE.POLYGON);
-    if (isPolygonOnly) return filterSelection;
+    const holdsPolygonsOnly = geometryVector instanceof GpuVector;
+    if (holdsPolygonsOnly && renderableGeometryTypes.includes(SINGLE_PART_GEOMETRY_TYPE.POLYGON)) return filterSelection;
 
     return intersectSelectionVectors(filterSelection, selectGeometryTypes(geometryVector, renderableGeometryTypes, featureTable.numFeatures));
 }

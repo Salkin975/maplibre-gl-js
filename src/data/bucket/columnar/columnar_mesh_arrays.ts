@@ -282,8 +282,8 @@ export function reserveEarcutFill(target: FillMeshTarget, geometryVector: Geomet
 /**
  * Tells whether `subdividePolygon()` changes the polygons of tile `canonical`: it subdivides them at a
  * granularity of 2 or more, which the globe uses at every zoom, and it extends the polygons of a tile on
- * the north or south edge of the world to the poles, in every projection. Neither direct write does
- * either, so such a tile is triangulated by `FillBucket`.
+ * the north or south edge of the world to the poles, in every projection. Neither write straight from
+ * the tile does either, so such a tile is triangulated by `FillBucket`.
  */
 export function needsSubdivision(canonical: CanonicalTileID, granularity: number): boolean {
     return granularity >= 2 || canonical.y === 0 || canonical.y === (1 << canonical.z) - 1;
