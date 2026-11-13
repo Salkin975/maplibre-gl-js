@@ -6,6 +6,9 @@ import {MLTVectorTileLayer} from '../../../source/vector_tile_mlt.ts';
 import {preTessellatedTables} from '../../../util/test/mlt.ts';
 import {CANONICAL, LINE_BUCKETS, bucketParameters, bytes, createLineLayer, lineArrays, populateBoth, populateOptions, rowsOf} from '../../../util/test/columnar_bucket.ts';
 
+import type {FilterSpecification} from '@maplibre/maplibre-gl-style-spec';
+import type {Bucket} from '../../bucket.ts';
+
 /** A zigzag with sharp and obtuse corners and a duplicate vertex, a straight line, a polygon. */
 function encodeFeatures(): Uint8Array {
     return encodeTile([{
@@ -146,5 +149,39 @@ describe('LineBucket populated from the columns of an MLT layer', () => {
 
         expect(bucket.isEmpty()).toBe(false);
         expect(insert).toHaveBeenCalled();
+    });
+});
+
+describe('LineStyleLayer.createBucket', () => {
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    test('creates a columnar bucket for an MLT layer whose filter can be planned', () => {
+        const layer = createLineLayer(['==', 'class', 'a']);
+
+        const bucket: Bucket = layer.createBucket(bucketParameters(layer, 'mlt'));
+
+        expect(bucket.isColumnar).toBe(true);
+    });
+
+    test('creates a row-based bucket for an MVT layer', () => {
+        const layer = createLineLayer(['==', 'class', 'a']);
+
+        const bucket: Bucket = layer.createBucket(bucketParameters(layer, 'mvt'));
+
+        expect(bucket.isColumnar).toBe(false);
+    });
+
+    test('falls back to the row-based bucket and says so once when the filter cannot be planned', () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const layer = createLineLayer(['within', {type: 'Polygon', coordinates: [[[0, 0], [1, 0], [1, 1], [0, 0]]]}] as FilterSpecification);
+
+        const first = layer.createBucket(bucketParameters(layer, 'mlt'));
+        layer.createBucket(bucketParameters(layer, 'mlt'));
+
+        expect(first.isColumnar).toBe(false);
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(warn.mock.calls[0][0]).toContain('layer "line": filter is not supported');
     });
 });

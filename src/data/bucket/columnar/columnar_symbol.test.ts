@@ -1,4 +1,4 @@
-import {describe, test, expect} from 'vitest';
+import {describe, test, expect, vi, afterEach} from 'vitest';
 import {encodeTile, decodeTile} from '@maplibre/mlt';
 import {SymbolBucket} from '../symbol_bucket.ts';
 import {MLTVectorTileLayer} from '../../../source/vector_tile_mlt.ts';
@@ -6,6 +6,9 @@ import {FeatureIndex} from '../../feature_index.ts';
 import {OverscaledTileID} from '../../../tile/tile_id.ts';
 import {createPopulateOptions} from '../../../../test/unit/lib/tile.ts';
 import {CANONICAL, SYMBOL_BUCKETS, bucketParameters, createSymbolLayer, populateBoth, rowsOf} from '../../../util/test/columnar_bucket.ts';
+
+import type {FilterSpecification} from '@maplibre/maplibre-gl-style-spec';
+import type {Bucket} from '../../bucket.ts';
 
 /** Three points, and two collinear segments of one road that carry the same name. */
 function encodeFeatures(): Uint8Array {
@@ -71,5 +74,39 @@ describe('SymbolBucket populated from the columns of an MLT layer', () => {
         bucket.populate(rowsOf(new MLTVectorTileLayer(table)), options, CANONICAL);
 
         expect(bucket.features).toHaveLength(5);
+    });
+});
+
+describe('SymbolStyleLayer.createBucket', () => {
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    test('creates a columnar bucket for an MLT layer whose filter can be planned', () => {
+        const layer = createSymbolLayer(['==', 'class', 'a']);
+
+        const bucket: Bucket = layer.createBucket(bucketParameters(layer, 'mlt'));
+
+        expect(bucket.isColumnar).toBe(true);
+    });
+
+    test('creates a row-based bucket for an MVT layer', () => {
+        const layer = createSymbolLayer(['==', 'class', 'a']);
+
+        const bucket: Bucket = layer.createBucket(bucketParameters(layer, 'mvt'));
+
+        expect(bucket.isColumnar).toBe(false);
+    });
+
+    test('falls back to the row-based bucket and says so once when the filter cannot be planned', () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const layer = createSymbolLayer(['within', {type: 'Polygon', coordinates: [[[0, 0], [1, 0], [1, 1], [0, 0]]]}] as FilterSpecification);
+
+        const first = layer.createBucket(bucketParameters(layer, 'mlt'));
+        layer.createBucket(bucketParameters(layer, 'mlt'));
+
+        expect(first.isColumnar).toBe(false);
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(warn.mock.calls[0][0]).toContain('layer "symbol": filter is not supported');
     });
 });
