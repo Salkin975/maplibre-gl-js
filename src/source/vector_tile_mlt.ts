@@ -227,6 +227,19 @@ function inferVertexBases(geometryVector: GpuVector): Uint32Array {
 }
 
 /**
+ * Returns the cross product of the edges from vertex `a` to `b` and from `a` to `c` of
+ * `vertexBuffer`, a flat list of x and y. It is positive for a triangle that winds clockwise in tile
+ * coordinates, whose y axis points down, as an MVT exterior ring does, and negative for one that winds
+ * counter-clockwise.
+ */
+export function triangleCrossProduct(vertexBuffer: Int32Array | Uint32Array, a: number, b: number, c: number): number {
+    const ax = vertexBuffer[a * 2], ay = vertexBuffer[a * 2 + 1];
+    const bx = vertexBuffer[b * 2], by = vertexBuffer[b * 2 + 1];
+    const cx = vertexBuffer[c * 2], cy = vertexBuffer[c * 2 + 1];
+    return (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+}
+
+/**
  * Returns a feature's triangles, each closed into a ring of its own. A layer without ring topology
  * stores nothing else of a polygon, and the triangles cover the same area as its rings, so
  * `queryRenderedFeatures` hits the same features.
@@ -240,12 +253,9 @@ function trianglesAsRings(geometryVector: GpuVector, index: number): Point[][] {
     const vertexBase = tessellatedVertexBase(geometryVector, index);
     const rings: Point[][] = [];
     for (let i = triangleOffsets[index] * 3; i < triangleOffsets[index + 1] * 3; i += 3) {
-        const ring = [0, 1, 2].map(corner => {
-            const vertex = (vertexBase + indexBuffer[i + corner]) * 2;
-            return new Point(vertexBuffer[vertex], vertexBuffer[vertex + 1]);
-        });
-        const [a, b, c] = ring;
-        if ((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x) < 0) ring.reverse();
+        const a = vertexBase + indexBuffer[i], b = vertexBase + indexBuffer[i + 1], c = vertexBase + indexBuffer[i + 2];
+        const corners = triangleCrossProduct(vertexBuffer, a, b, c) < 0 ? [c, b, a] : [a, b, c];
+        const ring = corners.map(vertex => new Point(vertexBuffer[vertex * 2], vertexBuffer[vertex * 2 + 1]));
         ring.push(ring[0].clone());
         rings.push(ring);
     }

@@ -3,7 +3,7 @@ import earcut from 'earcut';
 import {clamp, warnOnce} from '../../../util/util.ts';
 import {EXTENT} from '../../extent.ts';
 import {SegmentVector} from '../../segment.ts';
-import {tessellatedVertexBase} from '../../../source/vector_tile_mlt.ts';
+import {tessellatedVertexBase, triangleCrossProduct} from '../../../source/vector_tile_mlt.ts';
 import {fixWindingOrder} from '../../../render/subdivision.ts';
 import {fillLargeMeshArrays} from '../../../render/fill_large_mesh_arrays.ts';
 
@@ -227,10 +227,7 @@ export function writeTessellatedFill(target: FillMeshTarget, geometryVector: Gpu
     const triangleBase = triangleSegment.vertexLength;
     for (let i = triangleStart; i < triangleEnd; i += 3) {
         const a = indexBuffer[i], b = indexBuffer[i + 1], c = indexBuffer[i + 2];
-        const ax = vertexBuffer[(vertexBase + a) * 2], ay = vertexBuffer[(vertexBase + a) * 2 + 1];
-        const bx = vertexBuffer[(vertexBase + b) * 2], by = vertexBuffer[(vertexBase + b) * 2 + 1];
-        const cx = vertexBuffer[(vertexBase + c) * 2], cy = vertexBuffer[(vertexBase + c) * 2 + 1];
-        const clockwise = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax) > 0;
+        const clockwise = triangleCrossProduct(vertexBuffer, vertexBase + a, vertexBase + b, vertexBase + c) > 0;
         indexArray.emplaceBack(triangleBase + a, triangleBase + (clockwise ? c : b), triangleBase + (clockwise ? b : c));
     }
     triangleSegment.vertexLength += numVertices;
