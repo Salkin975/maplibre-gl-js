@@ -1,9 +1,9 @@
 /**
  * Switches the per-tile timing lines that `WorkerTile.parse()` appends to the worker's timing log, and
- * with them every clock read the timing takes. A benchmark build switches it on; while it is off, the
- * timing reads no clock and keeps no log.
+ * with them every clock read the timing takes. It is on, since this branch exists to measure; while it is
+ * off, the timing reads no clock and keeps no log.
  */
-export const LOG_WORKER_TIMING = false;
+export const LOG_WORKER_TIMING = true;
 
 /** The most lines the worker keeps for a reader that has not collected them yet. */
 const MAX_LOGGED_TILES = 5000;
